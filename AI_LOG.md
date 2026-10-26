@@ -202,16 +202,16 @@
 
 ### Prompt 原文 19
 
-> | 部分 | 要求 |
-> | --- | --- |
-> | 移动端 | Unity LTS、C#、AR Foundation；本项目采用 Android + ARCore 路线 |
-> | 管理端 | React、TypeScript |
-> | 后端 | Go，框架不限 |
-> | 持久化 | SQLite 或本地 JSON 文件，具体方案不在本 PRD 中预先决定 |
-> | AR 设备 | 支持 AR 的真机，不以普通 3D 场景或屏幕固定物体替代真实 AR |
-> | 数据来源 | Unity 和 React 必须连接同一个 Go 后端，使用同一份持久化数据 |
-> | 浏览器访问 | React 在浏览器中能够正常访问 Go 后端 |
-> | AI 使用 | 可以使用 AI 辅助开发，但产品本身不要求接入大模型 |
+> | 部分       | 要求                                                           |
+> | ---------- | -------------------------------------------------------------- |
+> | 移动端     | Unity LTS、C#、AR Foundation；本项目采用 Android + ARCore 路线 |
+> | 管理端     | React、TypeScript                                              |
+> | 后端       | Go，框架不限                                                   |
+> | 持久化     | SQLite 或本地 JSON 文件，具体方案不在本 PRD 中预先决定         |
+> | AR 设备    | 支持 AR 的真机，不以普通 3D 场景或屏幕固定物体替代真实 AR      |
+> | 数据来源   | Unity 和 React 必须连接同一个 Go 后端，使用同一份持久化数据    |
+> | 浏览器访问 | React 在浏览器中能够正常访问 Go 后端                           |
+> | AI 使用    | 可以使用 AI 辅助开发，但产品本身不要求接入大模型               |
 >
 > ---
 >
@@ -386,3 +386,128 @@
 
 - 修改后采用（继续执行剩余任务至门禁落地，最后停下汇报激活步骤）
 - 验证：确认 Clash 仍为美国A01 且 CDN 返回 200 后重启 Hub headless 安装，编辑器 6000.3.27f1 与 Android 全套 14 项组件全部 "installed successfully"；批处理打开工程执行 `ProjectSetup.RunAll`，经四轮「真实编译器报错 → 包源码核实 → 修复」迭代后 EXIT=0（修复：PlaneDetectionMode.requestedDetectionMode、UnityEditor.XR.Management 命名空间、UnityEngine.XR.ARCore.ARCoreLoader、using UnityEngine.UI、SerializedObject 直写 PlayerSettings 序列化字段、FindFirstObjectByType、NamedBuildTarget API）；`GateVerify.Run` 门禁自检 24/25 项 PASS、编译零错误零警告，唯一 FAIL 项「Custom Main Manifest 开关」经 162 个编辑器 DLL 字符串表排查确认无程序化 API，保留为手动勾选项；发现并记录引擎硬限制偏差（最低 API 25 而非计划的 24）。计划文档 7.1 验收结论与施工日志追记三、README 版本表/启动说明/已知问题已同步更新，未创建 Git 提交。
+
+### Prompt 原文 36
+
+> 你应当 按照 技能向我汇报
+
+### 结果
+
+- 采用（本条及后续条目由本次 review 对照 ZCode 本地会话数据库补齐或校正，不重复记录已由系统生成的上下文压缩摘要）
+- 验证：按 plan-execute 技能规定的结项汇报格式重新汇报，包含「⚠️ 未按计划实现」「未验证清单」「留下的尾巴」三个必备小节，逐项给出偏差原因与证据；本条未改动任何代码。
+
+### Prompt 原文 37
+
+> 代码 一次没有提交？
+> 你应当按照 技能规定的提交规则进行提交
+
+### 结果
+
+- 采用（用户明确授权后，按技能提交规则创建 Git 提交）
+- 验证：按端拆分为四个提交：`e8cd21a feat(backend)`、`62f98a6 feat(web)`、`001e0df feat(unity)`、`c67f812 docs`；第 4 个提交发现误并入 `docs/plan/002`，在未推送前以 `--amend` 修正提交说明如实注明，未 squash、未重排历史；提交后 `git status` 干净；未推送（推送需用户另行指示）。
+
+### Prompt 原文 38
+
+> 好 那么 接下来 详细的聊一下 这些没有按照计划实现的内容吧
+> 第一点，是当时的网络问题 导致没有争取执行？
+> 第二点 和 第五点，都是版本问题吧？我看 安卓 你使用的最新版 React 则是 按照文档 进行了降级，其实 React 也完全可以使用最新版的，可以升级回去
+>
+> Custom Main Manifest 是什么情况？没有理解，你需要单独解释一下这个问题
+>
+> 页面无控制台错误 是什么意思？我们原本的计划文档中 是怎么说的？
+
+### 结果
+
+- 修改后采用（逐条解释六项偏差；并按用户授权将 web 构建工具链升级回最新稳定版）
+- 验证：澄清第 1 项为当时 CDN 网络封锁所致、已用批处理初始化补齐并过门禁；第 2 项为 Unity 6000.3 引擎硬性最低 API 25 限制（非选择问题）；第 5 项澄清 React 本就为最新 19.3.1、从未降级，被降级的只是 Vite/TS 工具链，本次按授权升级为 vite 8.3.5、typescript 7.0.2、@vitejs/plugin-react 6.1.2；`pnpm typecheck`（TS 7）通过、`pnpm lint` 0 告警 0 错误、`pnpm build` 成功，dev server 启动正常且首页与业务模块编译无报错；README 版本表与计划 001 施工日志阶段 2 追记已同步更新。本轮工具链升级变更未提交（待用户指示）。
+
+### Prompt 原文 39
+
+> 好了 我验证过了 没有 报错
+> 那么 你来告诉我 我应该去开哪一个开关吧，另外，之前在任务进行中 你不是还提到过 需要一个个人认证？现在还需要吗？如果需要多话 我应该怎么做？
+
+### 结果
+
+- 采用（告知 Custom Main Manifest 开关的准确位置与验证方式；澄清个人许可证现状）
+- 验证：未修改代码。开关路径依据为工程已切换 Android 平台、Player Settings 的 Publishing Settings 段与已就位的 Assets/Plugins/Android/AndroidManifest.xml；许可证结论依据为本机批处理模式已多次成功运行（编辑器启动时会执行许可证检查，说明 Hub 登录已自动获取 Personal 授权），另提供 Hub 内 30 秒人工确认路径与无证时的手动激活步骤。
+
+### Prompt 原文 40
+
+> 我打开这个页面了 我发现 这个按钮本身就是已经勾选了的
+> 这事什么情况？
+> 是不是你的判断有什么失误的地方？
+> 去联网搜索一下，这是什么情况，以及应当如何解决吧
+> [图片：Unity 设置页面截图，Custom Main Manifest 已勾选]
+
+### 结果
+
+- 修改后采用（联网查证后承认判断失误，并修正自检脚本）
+- 验证：确认用户截图中 Custom Main Manifest 已勾选且指向标准路径文件，而磁盘工程设置序列化字段仍为 0，矛盾成立。联网查证：Unity 员工在官方论坛明确该开关按 `Assets/Plugins/Android/AndroidManifest.xml` 文件是否存在工作（无公开 API，取消勾选即重命名为 `.DISABLED`），本机 6000.3.27f1 Android 模块同样含该机制；此前「无 API 所以需 GUI 手动勾选」的推断错误，FAIL 是自检误读了无效字段。已删除 ProjectSetup 对该字段的无效写入，GateVerify 改为检查标准路径 Manifest 文件与内容；在已打开的编辑器中先复现旧程序集旧 FAIL，经 Assets → Refresh 重新编译无错误后重跑菜单自检，24/24 项全部 PASS。README 与计划 001（状态、验收结论、施工日志追记四）已勘误；变更未提交。
+
+### Prompt 原文 41
+
+> 继续
+
+### 结果
+
+- 采用（继续完成复验收尾）
+- 验证：完成修正后自检的触发与结果读取（Editor.log 新一轮 24/24 PASS、无编译错误），复查 `git diff --check` 无空白错误；保留编辑器首开自动生成的 XR 配置文件未清理。文档勘误与 AI_LOG 记录完成；变更未提交（待用户指示）。
+
+### Prompt 原文 42
+
+> 好 吧这一次 错误判断 记录下来吧 在 docs 中创建一个合适的目录，写下这篇文档
+
+### 结果
+
+- 采用
+- 验证：新建 `docs/lessons/001-CustomMainManifest门禁误报.md`，内容覆盖现象与矛盾、开关真实机制、误判形成过程、修复与复验、影响评估、防再犯规则和参考资料；README 新增「复盘记录」入口，计划 001 施工日志追记四补充复盘链接；`git diff --check` 无空白错误。变更未提交（待用户指示）。
+
+### Prompt 原文 43
+
+> 好 现在 阶段一的 任务 已经完成了，你来帮我 review 一下
+> 另外，任务是在 session_0625f4bb651a1ac04e457ae01f9b8298 会话中完成的，在这里 似乎没有正确的记录 AI_LOG 对话已经多次压缩，你可能无法直接获取我都输入了什么，你可以找一下zcode 数据库，拿到这些信息 补全进 AI_LOG 中
+
+### 结果
+
+- 采用（完成计划 001 独立 review，并从 ZCode 本地会话数据库补录真实输入；不修改三端实现）
+- 验证：Go 格式、普通测试、竞态测试、静态检查、编译及独立临时数据库重启验证通过；React 锁定安装、类型检查、lint、生产构建及桌面/窄屏页面验证通过。发现两项阻断整体验收的问题：SQLite 健康检查在独立临时数据库文件损坏实验中仍可能返回成功；Android XR 配置有两个独立 ARCore Loader，初始化未按类型去重且自检未发现重复。计划 001 状态调整为“待修复后验收”，第 7.2 节及施工日志记录证据、用户影响、修复方向和未验证项，README 同步已知问题。Android 构建、最终合并 Manifest 和真机 AR 未验证。
+
+### Prompt 原文 44
+
+> 查看session_67dd1dd66a7c92b4f8af4c1d822a426b会话的 最后一轮对话，是对 001-三端工程骨架搭建计划.md 的 review
+>
+> 确认一下，都还有什么缺陷需要修复
+
+### 结果
+
+- 采用（还原该会话最后一轮 review 结论并核对当前代码，仅汇报、不动手修）
+- 验证：从本地会话留档还原最后一轮 review 全文，确认待修复缺陷为两项 P1（SQLite 健康检查损坏覆盖不足、ARCore Loader 重复注册）；逐一读取 sqlite_store.go、ProjectSetup.cs、GateVerify.cs 与 XRGeneralSettingsPerBuildTarget.asset 现状，确认两项均未修复；同时确认两个版本偏差（最低 API 25、前端 Vite 8/TS 7）为已记录且用户已接受，不算待修复缺陷。
+
+### Prompt 原文 45
+
+> 修复这些已知问题，你所的那两个版本问题，不用再考虑了，我已经处理过了
+
+### 结果
+
+- 采用（goal 指令修复批：处理上述两项 P1 缺陷；两个版本偏差按用户确认不再处理）
+- 验证：Go——`HealthCheck` 改为真实读库（现有连接读一次 SQLite 系统表 + 全新连接再读一次，防旧连接页缓存掩盖损坏），新增“运行中主文件损坏且 WAL 丢失”“重启后主文件损坏”两场景回归测试及 HTTP 层损坏重启后 503 端到端测试；`gofmt` 无差异、`go test ./...` 与 `-race` 全过、`go vet` 干净、`go build` 成功（产物已删）。Unity——ProjectSetup 按类型复用/去重 Loader 并检查 TryAddLoader/TryRemoveLoader 结果，GateVerify 新增“ARCore Loader 无同类型重复注册”检查（共 25 项），现有 XR 资产清理为单一 Loader；因编辑器被用户会话占用，改在工程副本（特意恢复双重 Loader 状态）批处理复验：初始化一实际输出“已清理 1 个重复 ARCore Loader”、初始化二无清理无新增、门禁自检 25/25 全 PASS 且 0 编译错误 0 警告、三轮退出码均 0。期间流水线首轮曾检出修复代码自身编译错误（GateVerify 缺 using System.Collections.Generic），修正后复跑通过。计划 001 状态流转“已完成”（新增第 7.3 节修复批复验记录与施工日志），README 版本表/启动说明/已知问题同步为已修复留档。Android 构建、最终合并 Manifest、真机 AR 维持未验证；变更未提交（待用户指示）。
+
+### Prompt 原文 46
+
+> 在 session_67dd1dd66a7c92b4f8af4c1d822a426b 会话中 review 发现部分问题
+> 在 session_331147929bd664bf5e062348b9dd3a09 会话中修复
+> 接下来 你再来完成最后一轮 review 确保没有任何问题
+
+### 结果
+
+- 采用（终审 review：逐项核对两项 P1 修复的最终形态并亲自复跑三端验证；未发现新问题，未改动代码，仅追加本条记录）
+- 验证：Go——复核 `HealthCheck`（现有连接 + 全新探测连接各读一次 SQLite 系统表）与三处损坏场景测试代码，`gofmt` 无差异、`go vet` 干净、`go build` 成功、`go test ./...` 与 `-race -count=1` 免缓存全过。Unity——ProjectSetup 按类型去重/幂等逻辑与 GateVerify 检查项复核无误（25 项 = grep 计数 26 减方法定义本身，与修复批记录吻合），`using System.Collections.Generic` 已补，`XRGeneralSettingsPerBuildTarget.asset` 仅剩单一 ARCore Loader 且 fileID 引用完好，全仓不再有依赖 `useCustomMainManifest` 序列化字段的判定残留，新增未跟踪资产均为编辑器正常生成物（ARCore/XR Simulation/PackageManager 设置）；编辑器编译与 25/25 门禁结论沿用修复批工程副本批处理复验证据（编辑器被用户占用，本轮未重复执行）。Web——Vite 8 / TS 7 升级后 `pnpm install --frozen-lockfile`、typecheck、lint、生产构建全过。文档——计划 001“已完成”状态、7.2/7.3 节、README 版本表、`docs/lessons/001` 复盘相互一致（复盘时 24 项为删除误报检查后的时点值，修复批新增重复检查后为 25 项，时间线可对齐）；敏感信息扫描无命中；验证运行无仓库残留（dist/data 均在忽略规则内）。Android 构建、最终合并 Manifest、真机 AR 仍维持计划第 8 节未验证安排；变更未提交（待用户指示）。
+
+### Prompt 原文 47
+
+> 好 你来提交一下吧
+
+### 结果
+
+- 采用（将修复批全部改动按性质拆为四个提交入库，不 squash、不改写已有历史）
+- 验证：逐组 `git add` 后分别提交——①fix(backend) 健康检查修复与回归测试；②fix(unity) Loader 去重/幂等、门禁修正与编辑器首开生成的 XR 资产；③chore(web) Vite 8/TS 7 工具链升级；④docs 计划 7.3 节、复盘 001、README 同步与本 AI_LOG 记录。提交后 `git status` 干净无残留，`git log` 确认四个提交文件清单与分组一致、均基于 c67f812 顺序追加。

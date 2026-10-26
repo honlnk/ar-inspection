@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Tailwind v4 编译入口：除必要设计令牌外不编写任何组件 CSS 规则。 */
+@theme {
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #d9e6ff;
+  --color-brand-500: #4d7cfe;
+  --color-brand-600: #3563e9;
+  --color-brand-700: #2a4fc0;
+}

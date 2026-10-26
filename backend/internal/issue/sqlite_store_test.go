@@ -77,6 +77,56 @@ func TestList_EmptyDatabaseReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+// TestHealthCheck_CorruptedFileDetected 验证数据库主文件损坏且 WAL 无有效数据时，
+// 无论连接是否保持打开，健康检查都必须返回错误，而不是误报存储正常。
+// 说明：WAL 模式下仅覆盖主文件而 -wal 仍完好时，SQLite 会继续从 WAL 提供数据，
+// 主连接关闭时 checkpoint 还会把有效数据写回主文件——那不是可检出的存储故障。
+func TestHealthCheck_CorruptedFileDetected(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "inspection.db")
+	store, err := OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("打开数据库失败: %v", err)
+	}
+	if err := store.Init(context.Background()); err != nil {
+		t.Fatalf("初始化数据库失败: %v", err)
+	}
+
+	// 场景一：运行中主文件被损坏且 WAL 丢失。此时旧连接的页缓存仍可能
+	// 让既有连接上的查询"看起来正常"，必须靠全新连接才能发现。
+	if err := os.WriteFile(dbPath, []byte("这不是 SQLite 数据库：主文件内容已损坏。"), 0o644); err != nil {
+		t.Fatalf("覆盖数据库文件失败: %v", err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(dbPath + suffix); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("移除 %s 失败: %v", suffix, err)
+		}
+	}
+	if err := store.HealthCheck(context.Background()); err == nil {
+		t.Fatal("运行中主文件损坏且 WAL 丢失，健康检查应返回错误")
+	}
+
+	// 关闭旧连接；此时主文件已是损坏内容，重新打开模拟重启。
+	if err := store.Close(); err != nil {
+		t.Fatalf("关闭数据库失败: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("corrupted: not a sqlite database"), 0o644); err != nil {
+		t.Fatalf("再次覆盖数据库文件失败: %v", err)
+	}
+
+	// 场景二：带着损坏的主文件重启进程。
+	reopened, err := OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("重新打开损坏数据库失败: %v", err)
+	}
+	defer reopened.Close()
+	if err := reopened.HealthCheck(context.Background()); err == nil {
+		t.Fatal("重启后主文件损坏，健康检查应返回错误")
+	}
+	if err := reopened.Init(context.Background()); err == nil {
+		t.Fatal("损坏数据库上执行初始化也应失败，不得把建表失败当作可用存储")
+	}
+}
+
 // TestReopen_PersistsAcrossReconnect 验证关闭连接后重新打开同一文件，数据仍在（重启持久化基础）。
 func TestReopen_PersistsAcrossReconnect(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "inspection.db")

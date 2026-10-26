@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,7 +60,7 @@ func TestHealth_OK(t *testing.T) {
 // TestHealth_StorageUnavailable 验证存储不可用时返回 503 service_unavailable，而非仅报进程存活。
 func TestHealth_StorageUnavailable(t *testing.T) {
 	router, store := newTestRouter(t)
-	// 关闭底层连接，模拟存储故障；后续 Ping 失败。
+	// 关闭底层连接，模拟存储故障；后续健康检查失败。
 	if err := store.Close(); err != nil {
 		t.Fatalf("关闭存储失败: %v", err)
 	}
@@ -77,7 +78,52 @@ func TestHealth_StorageUnavailable(t *testing.T) {
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("解析响应失败: %v", err)
+		t.Fatalf("解析响应失败: %v，响应 %s", err, rec.Body.String())
+	}
+	if body.Error.Code != "service_unavailable" {
+		t.Fatalf("期望 error.code=service_unavailable，实际 %q", body.Error.Code)
+	}
+}
+
+// TestHealth_CorruptedStorageReturns503 验证数据库文件内容损坏（连接仍可建立）时，
+// 健康检查接口同样返回 503，不把不可用的存储误报为正常。
+func TestHealth_CorruptedStorageReturns503(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dbPath := filepath.Join(t.TempDir(), "inspection.db")
+	store, err := issue.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("打开临时数据库失败: %v", err)
+	}
+	if err := store.Init(context.Background()); err != nil {
+		t.Fatalf("初始化临时数据库失败: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("关闭存储失败: %v", err)
+	}
+	// 覆盖主文件为非 SQLite 文本，模拟重启后磁盘内容损坏。
+	if err := os.WriteFile(dbPath, []byte("corrupted: not a sqlite database"), 0o644); err != nil {
+		t.Fatalf("覆盖数据库文件失败: %v", err)
+	}
+	reopened, err := issue.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("重新打开损坏数据库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	router := NewRouter(reopened, []string{"http://localhost:5173"})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("期望 503，实际 %d，响应 %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("解析响应失败: %v，响应 %s", err, rec.Body.String())
 	}
 	if body.Error.Code != "service_unavailable" {
 		t.Fatalf("期望 error.code=service_unavailable，实际 %q", body.Error.Code)

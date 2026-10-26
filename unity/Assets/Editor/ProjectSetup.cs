@@ -17,7 +17,8 @@ namespace Inspection.EditorTools
 {
     /// <summary>
     /// 一次性工程初始化：创建巡检主场景、目录骨架，并落地 Android / ARCore 构建设置。
-    /// 首次用 Unity 打开 unity/ 工程后，从菜单「现场巡检 / 初始化工程」执行一次即可。
+    /// 首次用 Unity 打开 unity/ 工程后，从菜单「现场巡检 / 初始化工程」执行。
+    /// 脚本可重复执行（幂等）：已存在的配置不重复创建，重复的同类型 XR Loader 会被清理。
     /// 本脚本只搭骨架，不实现平面检测、标记放置或表单业务。
     /// </summary>
     public static class ProjectSetup
@@ -31,9 +32,6 @@ namespace Inspection.EditorTools
             EnsureFolders();
             ConfigurePlayerSettings();
             SwitchToAndroid();
-            // useCustomMainManifest 属于按平台分块的设置，必须在切到 Android 之后写入，
-            // 否则平台切换会以默认值重建 Android 块，覆盖先前设置
-            SetPlayerSetting("useCustomMainManifest", 1);
             EnableARCoreLoader();
             BuildScene();
             AssetDatabase.SaveAssets();
@@ -72,9 +70,7 @@ namespace Inspection.EditorTools
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
 
             // 局域网 HTTP 联调：仅开发构建允许明文流量（正式构建不允许）。
-            // 以下两项为全局设置，按 ProjectSettings.asset 序列化字段名直写：
             // activeInputHandler 2=Both；insecureHttpOption 1=仅开发
-            // useCustomMainManifest 按平台分块存储，须在切换到 Android 之后设置（见 RunAll）
             SetPlayerSetting("insecureHttpOption", 1);
             SetPlayerSetting("activeInputHandler", 2);
 
@@ -125,7 +121,7 @@ namespace Inspection.EditorTools
                 return;
             }
 
-            // 通过反射创建 ARCoreLoader，避免对 ARCore 插件类型的编译期硬依赖
+            // 通过反射定位 ARCoreLoader 类型，避免对 ARCore 插件类型的编译期硬依赖
             // （真实命名空间为 UnityEngine.XR.ARCore，Unity.XR.ARCore 为备选）
             var loaderType = FindType("UnityEngine.XR.ARCore.ARCoreLoader")
                 ?? FindType("Unity.XR.ARCore.ARCoreLoader");
@@ -134,14 +130,60 @@ namespace Inspection.EditorTools
                 Debug.LogWarning("[ProjectSetup] 未找到 ARCoreLoader 类型，请安装 com.unity.xr.arcore 后在 XR Plug-in Management 中手动勾选 ARCore。");
                 return;
             }
-            var loader = ScriptableObject.CreateInstance(loaderType) as XRLoader;
-            if (loader != null)
+
+            // TryAddLoader 按对象引用去重而不按类型去重，重复执行会累积同类型 Loader。
+            // 这里按类型复用第一个已有 Loader，并移除多余项及其子资产，保证初始化幂等。
+            XRLoader existing = null;
+            var duplicates = new List<XRLoader>();
+            foreach (var l in manager.activeLoaders)
             {
-                loader.name = "ARCore Loader";
-                AssetDatabase.AddObjectToAsset(loader, container.SettingsForBuildTarget(BuildTargetGroup.Android));
-                manager.TryAddLoader(loader);
+                if (l == null || l.GetType() != loaderType)
+                {
+                    continue;
+                }
+                if (existing == null)
+                {
+                    existing = l;
+                }
+                else
+                {
+                    duplicates.Add(l);
+                }
+            }
+            foreach (var dup in duplicates)
+            {
+                if (!manager.TryRemoveLoader(dup))
+                {
+                    Debug.LogWarning($"[ProjectSetup] 移除重复 ARCore Loader 失败：{dup.name}");
+                    continue;
+                }
+                AssetDatabase.RemoveObjectFromAsset(dup);
+                UnityEngine.Object.DestroyImmediate(dup);
                 EditorUtility.SetDirty(container);
             }
+            if (duplicates.Count > 0)
+            {
+                Debug.Log($"[ProjectSetup] 已清理 {duplicates.Count} 个重复 ARCore Loader。");
+            }
+            if (existing != null)
+            {
+                return;
+            }
+
+            var loader = ScriptableObject.CreateInstance(loaderType) as XRLoader;
+            if (loader == null)
+            {
+                Debug.LogWarning("[ProjectSetup] 创建 ARCore Loader 实例失败。");
+                return;
+            }
+            loader.name = "ARCore Loader";
+            AssetDatabase.AddObjectToAsset(loader, container.SettingsForBuildTarget(BuildTargetGroup.Android));
+            if (!manager.TryAddLoader(loader))
+            {
+                Debug.LogWarning("[ProjectSetup] ARCore Loader 注册失败，请在 XR Plug-in Management 中手动勾选 ARCore。");
+                return;
+            }
+            EditorUtility.SetDirty(container);
         }
 
         private static void BuildScene()

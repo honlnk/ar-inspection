@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  自定义 Main Manifest（ProjectSetup 会启用 Custom Main Manifest 开关）。
+  自定义 Main Manifest：标准路径下的本文件启用 Player Settings 中的
+  Custom Main Manifest；取消勾选时 Unity 会将文件重命名为 .DISABLED。
   相机权限与 ARCore 的 uses-feature / meta-data 由 ARCore XR 插件的库 Manifest
   在 Gradle 合并时自动加入，此处不重复声明，避免重复条目。
 -->

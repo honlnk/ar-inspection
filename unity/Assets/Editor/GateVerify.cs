@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -118,12 +119,8 @@ namespace Inspection.EditorTools
             // 计划要求 API 24；Unity 6000.3 引擎最低仅支持 API 25（已在计划文档记录偏差）
             Check(PlayerSettings.Android.minSdkVersion == AndroidSdkVersions.AndroidApiLevel25,
                 "Android 最低 API 为 25（引擎下限，计划 24 的已记录偏差）");
-            // 以下三项在 6000.3 无公开读取 API，用 SerializedObject 按序列化字段名读取
+            // 以下两项在 6000.3 无公开读取 API，用 SerializedObject 按序列化字段名读取
             Check(GetPlayerSetting("activeInputHandler") == 2, "输入处理为 Both");
-            // Unity 6000.3 对该开关无任何程序化 API（含 internal），SerializedObject 直写会被
-            // 内部状态还原，只能通过 GUI 勾选一次；Manifest 文件本身已在标准路径就位
-            Check(GetPlayerSetting("useCustomMainManifest") == 1,
-                "已启用自定义 Main Manifest（如 FAIL：Player Settings → Publishing Settings → 勾选 Custom Main Manifest 即可，文件已就位）");
             Check(GetPlayerSetting("insecureHttpOption") == 1, "明文 HTTP 仅限开发构建");
             Check(PlayerSettings.GetApplicationIdentifier(android) == "com.honlnk.arinspection",
                 "Android 包名正确");
@@ -144,15 +141,20 @@ namespace Inspection.EditorTools
         private static void VerifyARCoreLoader()
         {
             var general = XRGeneralSettingsPerBuildTarget.XRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
-            var hasARCore = general != null && general.Manager != null
-                && general.Manager.activeLoaders.Any(l => l != null && l.GetType().Name.Contains("ARCoreLoader"));
-            Check(hasARCore, "Android 构建组已启用 ARCore Loader");
+            var arcoreLoaders = general != null && general.Manager != null
+                ? general.Manager.activeLoaders
+                    .Where(l => l != null && l.GetType().Name.Contains("ARCoreLoader")).ToList()
+                : new List<XRLoader>();
+            Check(arcoreLoaders.Count >= 1, "Android 构建组已启用 ARCore Loader");
+            Check(arcoreLoaders.Count == 1,
+                $"ARCore Loader 无同类型重复注册（实际 {arcoreLoaders.Count} 个；重复会随构建序列化进 XR 配置）");
         }
 
         private static void VerifyManifest()
         {
             const string manifestPath = "Assets/Plugins/Android/AndroidManifest.xml";
-            Check(File.Exists(manifestPath), $"自定义 Main Manifest 存在：{manifestPath}");
+            Check(File.Exists(manifestPath),
+                $"已启用自定义 Main Manifest：{manifestPath}（由标准路径下的文件启用；勿用 useCustomMainManifest 序列化字段判断）");
             if (File.Exists(manifestPath))
             {
                 var content = File.ReadAllText(manifestPath);

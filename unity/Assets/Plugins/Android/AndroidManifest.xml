@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自定义 Main Manifest（ProjectSetup 会启用 Custom Main Manifest 开关）。
+  相机权限与 ARCore 的 uses-feature / meta-data 由 ARCore XR 插件的库 Manifest
+  在 Gradle 合并时自动加入，此处不重复声明，避免重复条目。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 局域网访问电脑后端（HTTP 明文）需要网络权限 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Android 11+（targetSdk>=30）侧载应用查询 ARCore 可用性必须声明包可见性，
+         否则运行时报 UNKNOWN_ERROR（见 docs/真机ARCore可行性验证报告.md） -->
+    <queries>
+        <package android:name="com.google.ar.core" />
+    </queries>
+
+    <application>
+        <activity android:name="com.unity3d.player.UnityPlayerActivity"
+                  android:theme="@style/UnityThemeSelector"
+                  android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <meta-data android:name="unityplayer.UnityActivity" android:value="true" />
+        </activity>
+    </application>
+</manifest>

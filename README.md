@@ -7,14 +7,14 @@
 | 部分 | 技术 | 版本 | 状态 |
 | --- | --- | --- | --- |
 | 移动端 | Unity LTS + AR Foundation + ARCore | 待安装后补充 | 未开始 |
-| 管理端 | React + TypeScript | 待补充 | 未开始 |
-| 后端 | Go | 待补充（`go version` 确认后填写） | 未开始 |
+| 管理端 | React + TypeScript（Node.js v24.11.0、pnpm 10.21.0） | React/TS 待工程创建后锁定 | 未开始 |
+| 后端 | Go 1.27.3 + Gin + SQLite | Gin/SQLite 驱动待工程创建后锁定 | 未开始 |
 | 真机 | iQOO Z9（V2361A，Android 16） | ARCore 运行时 1.57.0，实测 SUPPORTED_INSTALLED | 已验证 |
 
 ## 如何启动
 
-- **Go 后端**：（待补充，计划 `cd backend && go run ./...`，默认监听 `:8080`）
-- **React 管理端**：（待补充，计划 `cd web && npm install && npm run dev`）
+- **Go 后端**：（待补充，计划 `cd backend && go run ./cmd/server`，默认监听 `:8080`）
+- **React 管理端**：（待补充，计划 `cd web && pnpm install && pnpm dev`）
 - **Unity 移动端**：（待补充：Unity 版本、打包方式 `Build And Run` 到真机）
 
 ## Unity 真机如何配置 Go 后端地址

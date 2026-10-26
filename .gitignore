@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Unity
+unity/Library/
+unity/Temp/
+unity/Logs/
+unity/Build/
+unity/UserSettings/
+unity/*.apk
+unity/*.aab
+unity/Assembly-CSharp.csproj
+unity/*.sln
+
+# Go
+backend/bin/
+backend/inspection-backend
+*.test
+
+# Node / React
+web/node_modules/
+web/dist/
+
+# IDE / 构建工具
+.gradle/
+local.properties
+.idea/
+.vscode/
+
+# 检测工具构建产物
+tools/ar-support-check/build/

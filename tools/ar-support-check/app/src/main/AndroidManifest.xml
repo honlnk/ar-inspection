@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Android 11+ 包可见性声明：允许本 App 查询 com.google.ar.core 包（GitHub issue #1271） -->
+    <queries>
+        <package android:name="com.google.ar.core" />
+    </queries>
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="true" />
+    <!-- AR 可选声明，不影响安装，仅探测用 -->
+    <uses-feature android:name="android.hardware.camera.ar" android:required="false" />
+
+    <application
+        android:label="AR 支持检测"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:allowBackup="false">
+        <meta-data android:name="com.google.ar.core" android:value="optional" />
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

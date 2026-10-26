@@ -7,13 +7,16 @@ unity/Temp/
 unity/Logs/
 unity/Build/
 unity/UserSettings/
+unity/obj/
+unity/.vs/
 unity/*.apk
 unity/*.aab
-unity/Assembly-CSharp.csproj
+unity/*.csproj
 unity/*.sln
 
-# Go
+# Go（go build ./cmd/server 会在 backend/ 下生成 server 二进制）
 backend/bin/
+backend/server
 backend/inspection-backend
 backend/data/
 *.test

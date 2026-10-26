@@ -43,7 +43,7 @@ func run() error {
 	}
 
 	gin.SetMode(gin.ReleaseMode)
-	router := httpapi.NewRouter(store, splitOrigins(corsOrigins))
+	router := httpapi.NewRouter(store, splitOrigins(corsOrigins), issue.DefaultFieldGenerator())
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           router,

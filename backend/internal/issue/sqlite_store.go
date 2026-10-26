@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -111,6 +112,79 @@ func (s *SQLiteStore) List(ctx context.Context) ([]Issue, error) {
 		return nil, fmt.Errorf("遍历问题列表失败: %w", err)
 	}
 	return issues, nil
+}
+
+// Create 在事务中写入新问题，提交成功后读取并返回完整记录；
+// 插入或提交失败时事务整体回滚，不返回成功。
+func (s *SQLiteStore) Create(ctx context.Context, it Issue) (Issue, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Issue{}, fmt.Errorf("开启事务失败: %w", err)
+	}
+	defer tx.Rollback() // 提交成功后的回滚是空操作
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO issues (id, title, description, priority, status,
+		                    position_x, position_y, position_z, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, it.ID, it.Title, it.Description, it.Priority, it.Status,
+		it.Position.X, it.Position.Y, it.Position.Z, it.CreatedAt, it.UpdatedAt)
+	if err != nil {
+		return Issue{}, fmt.Errorf("写入问题失败: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Issue{}, fmt.Errorf("提交事务失败: %w", err)
+	}
+	return s.findByID(ctx, it.ID)
+}
+
+// UpdateStatus 在事务中更新状态与更新时间，目标不存在时回滚并返回 ErrNotFound。
+// 重复设置同一状态仍算一次合法更新（SQLite 的 UPDATE 按匹配行计数）。
+func (s *SQLiteStore) UpdateStatus(ctx context.Context, id string, status Status, updatedAt string) (Issue, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Issue{}, fmt.Errorf("开启事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE issues SET status = ?, updated_at = ? WHERE id = ?
+	`, status, updatedAt, id)
+	if err != nil {
+		return Issue{}, fmt.Errorf("更新状态失败: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return Issue{}, fmt.Errorf("读取更新行数失败: %w", err)
+	}
+	if affected == 0 {
+		return Issue{}, ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return Issue{}, fmt.Errorf("提交事务失败: %w", err)
+	}
+	return s.findByID(ctx, id)
+}
+
+// findByID 读取单条完整记录；ID 不存在返回 ErrNotFound。
+func (s *SQLiteStore) findByID(ctx context.Context, id string) (Issue, error) {
+	var it Issue
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, title, description, priority, status,
+		       position_x, position_y, position_z, created_at, updated_at
+		FROM issues WHERE id = ?
+	`, id).Scan(
+		&it.ID, &it.Title, &it.Description, &it.Priority, &it.Status,
+		&it.Position.X, &it.Position.Y, &it.Position.Z,
+		&it.CreatedAt, &it.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Issue{}, ErrNotFound
+	}
+	if err != nil {
+		return Issue{}, fmt.Errorf("读取问题失败: %w", err)
+	}
+	return it, nil
 }
 
 // Close 关闭数据库连接。

@@ -7,14 +7,23 @@
 | 部分 | 技术 | 版本 | 状态 |
 | --- | --- | --- | --- |
 | 移动端 | Unity 6000.3.27f1 LTS（修订 672d562a42a7）+ AR Foundation 6.6.2 + ARCore XR Plug-in 6.6.2 + XR Plug-in Management 4.4.0 + XR Core Utils 2.6.0 | 见 `unity/Packages/manifest.json` 与 `unity/Packages/packages-lock.json` | 编辑器与 Android 全套组件已安装；工程已初始化并实际打开，编译及自检通过；review 发现的 ARCore Loader 重复已修复（初始化幂等），Android 构建待验证 |
-| 管理端 | React 19.3.1 + TypeScript 7.0.2 + Vite 8.3.5 + Tailwind CSS 4.3.3 + oxlint 1.89.0（Node.js v24.11.0、pnpm 10.21.0） | 见 `web/package.json` 与 `web/pnpm-lock.yaml` | 骨架完成，typecheck/lint/build 与浏览器双视口验收通过；未接后端数据。注：工具链由计划锁定的 Vite 7 / TS 5 经用户拍板升级至最新稳定版（2026-10-27，计划文档施工日志留档） |
+| 管理端 | React 19.3.1 + TypeScript 7.0.2 + Vite 8.3.5 + Tailwind CSS 4.3.3 + oxlint 1.89.0；测试：Vitest 5.0.5 + React Testing Library 16.3.3 + user-event 14.6.8 + jest-dom 7.0.1 + jsdom 30.1.3（Node.js v24.11.0、pnpm 10.21.0） | 见 `web/package.json` 与 `web/pnpm-lock.yaml` | 业务闭环完成：真实列表加载、手动刷新、状态修改保存与全部异常反馈（失败/超时/异常响应）已实现并与真实后端联调验收通过（详见下方管理端说明）。注：工具链由计划锁定的 Vite 7 / TS 5 经用户拍板升级至最新稳定版（2026-10-27，计划文档施工日志留档） |
 | 后端 | Go 1.27.3 + Gin 1.12.0 + modernc.org/sqlite 1.61.0（纯 Go 驱动，SQLite 本地文件） | 见 `backend/go.mod` 与 `backend/go.sum` | 业务闭环完成：健康检查、创建、列表、状态修改四接口与参数校验、事务持久化、重启数据保留均已实现并通过真实进程验收（详见下方接口说明） |
 | 真机 | iQOO Z9（V2361A，Android 16） | ARCore 运行时 1.57.0，实测 SUPPORTED_INSTALLED | 已验证 |
 
 ## 如何启动
 
 - **Go 后端**：`cd backend && go run ./cmd/server`。默认监听 `:8080`（`ADDR` 可改），数据库默认 `./data/inspection.db`（`ISSUE_DB_PATH` 可改），跨域白名单默认 `http://localhost:5173,http://127.0.0.1:5173`（`CORS_ORIGINS` 可改），环境变量示例见 `backend/.env.example`。健康检查：`curl http://localhost:8080/api/health` → `{"data":{"status":"ok"}}`。真机联调时需监听 `0.0.0.0`（默认 `:8080` 即是）。测试与静态检查：`go test ./...`、`go test -race ./...`、`go vet ./...`。
-- **React 管理端**：`cd web && pnpm install && pnpm dev`，默认 `http://localhost:5173`（`VITE_API_BASE_URL` 见 `web/.env.example`，骨架阶段尚未请求后端）。类型检查/构建/静态检查：`pnpm typecheck`、`pnpm build`、`pnpm lint`。
+- **React 管理端**：`cd web && pnpm install && pnpm dev`，默认 `http://localhost:5173`（`VITE_API_BASE_URL` 见 `web/.env.example`，默认请求 `http://localhost:8080`；启动后即从后端加载问题列表）。类型检查/静态检查/测试/构建：`pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`。
+- **Unity 上报模拟工具（开发辅助）**：独立 Go 命令行工具 `tools/issue-reporter/`，代替 Unity 客户端以真实 HTTP 上报/查询问题，用于接口联调与回归（坐标为人工输入的模拟坐标，不代表真实 AR 位置）：
+
+  ```bash
+  cd tools/issue-reporter
+  go run . create -base-url http://localhost:8080 -title "模拟上报：入口墙面破损" -description "非 AR 工具创建" -priority high -x 0.42 -y 0.03 -z 1.26
+  go run . list -base-url http://localhost:8080
+  ```
+
+  详见 [tools/issue-reporter/README.md](tools/issue-reporter/README.md)（参数、输出与退出码）。测试：`cd tools/issue-reporter && go test ./...`。
 - **Unity 移动端**：编辑器 6000.3.27f1 与 Android 全套组件已安装（Hub 路径 `/Applications/Unity/Hub/Editor/6000.3.27f1/`）。工程初始化已执行（场景 `Assets/Scenes/Inspection.unity`、Android/ARCore 配置已落地）；日常用 Unity Hub 打开 `unity/` 工程即可。初始化菜单「现场巡检 / 初始化工程（场景 + Android + ARCore 配置）」可重复执行（幂等）：已存在的配置不重复创建，重复的同类型 XR Loader 会被自动清理。
 - **Unity 阶段门禁自检（SK-01/SK-02 自动验证）**：
   `/Applications/Unity/Hub/Editor/6000.3.27f1/Unity.app/Contents/MacOS/Unity -batchmode -quit -projectPath unity -executeMethod Inspection.EditorTools.GateVerify.Run -logFile unity/Logs/gate-verify.log`
@@ -77,15 +86,15 @@ curl -X PATCH http://localhost:8080/api/issues/<创建返回的id>/status -H 'Co
 - 仓库结构搭建、任务书与验证材料归档
 - Go 后端骨架：Gin 分层结构（cmd/internal：issue 存储 + httpapi）、SQLite WAL 自动建表、`GET /api/health`、统一响应结构与 CORS 基础、优雅关闭；常规测试与构建门禁通过。健康检查为真实读库检查（现有连接 + 全新连接各读一次 SQLite 系统表），连接关闭、运行中文件损坏、重启后文件损坏三类故障均返回 503，有测试覆盖
 - Go 后端业务闭环（2026-10-27 计划 002）：`POST /api/issues` 创建、`GET /api/issues` 列表、`PATCH /api/issues/{id}/status` 状态修改三接口上线——严格 JSON 校验（未知字段/额外内容/1 MiB 上限/中文错误）、后端生成 UUID v4 与北京时间、事务化 SQLite 读写、`created_at DESC, id ASC` 稳定排序、空列表 `[]`；模型/存储/HTTP 三层测试与 `-race` 全过，真实进程「创建→列表→改状态→停止→重启→再查询」验收通过（详见 `docs/plan/002` 施工日志）
-- React 管理端骨架：静态管理台外壳（侧栏/顶栏/卡片/表格）、三端一致类型与 API 解析基础、Tailwind CSS v4 工具类实现；typecheck/lint/build 与桌面+窄屏浏览器验收通过
+- React 管理端业务闭环（2026-10-27 计划 003）：真实问题列表首次加载与手动刷新（刷新保留未保存草稿、失败保留旧数据）、行内状态修改与保存（只发送 `{status}`、以服务端完整结果替换、失败保留原状态与草稿可原行重试）、单笔保存与列表请求互斥、10 秒超时、统一信封与运行时结构检查、北京时间展示、全部失败场景可见提示与重试入口（不白屏不伪装）；42 个组件与请求层测试全过，并与真实 Go 后端 + 模拟工具完成「工具创建 → React 刷新 → React 改状态 → 工具复核 → 后端重启 → React 复核」联合验收（桌面与 375px 窄屏，证据 `docs/evidence/003-react-bug-management/`）
+- Unity HTTP 上报模拟工具 `tools/issue-reporter/`（2026-10-27 计划 003）：独立 Go Module（仅标准库）create/list 子命令、完整 JSON 输出、10 秒默认超时、0/1/2 退出码、创建与列表契约检查、失败不自动重试；22 个测试（含 `-race`）全过。定位为开发辅助与回归工具，不是正式产品端、不验证 AR 能力，后续 Unity 真机完成前用于隔离接口问题
 - Unity 工程骨架：编辑器 6000.3.27f1 + Android 全套组件已安装；工程初始化完成（`Inspection.unity` 主场景含 AR 会话/AR 相机/仅水平平面检测/射线/锚点管理器/Canvas/EventSystem，Android IL2CPP+ARM64+API25+Both 输入，ARCore Loader 已启用，自定义 Main Manifest 文件含 INTERNET 权限与 ARCore 包可见性声明）；编辑器实际打开无编译错误，门禁自检 25/25 项通过，初始化幂等已复验（重复 Loader 自动清理），Android 构建待验证。Custom Main Manifest 由标准路径下的 Manifest 文件启用，无需手动勾选
 
 **未完成**
 
 - Unity AR 移动端业务（平面检测、点击放置标记、表单上报、UI 防误触）
-- React 管理端业务（真实数据加载、刷新、状态修改、加载/错误反馈）——后端接口已就绪，管理端尚未接入
 - Android 开发构建、最终合并 Manifest 与真机部署
-- 三端联调与演示视频（Go 后端目前仅完成独立业务闭环，Unity 上报与 React 操作尚未实际联调）
+- 三端联调与演示视频（Go 后端 + React 管理端 + 模拟工具的数据链路已联调验收；Unity 真机上报尚未接入，完整三端闭环待 Unity 完成后进行）
 
 **已知问题**
 
@@ -97,7 +106,7 @@ curl -X PATCH http://localhost:8080/api/issues/<创建返回的id>/status -H 'Co
 ## 佐证材料
 
 - [docs/真机ARCore可行性验证报告.md](docs/真机ARCore可行性验证报告.md) — 本轮设备验证的完整记录（结论、排查过程、UNKNOWN_ERROR 根因、复现方式）
-- `docs/evidence/` — Play 商店"不兼容"提示与 vivo 商店页面对比截图（背景说明：Play 分发目录不含国行型号，与运行时支持无关，详见 AI_LOG 第 7 条）
+- `docs/evidence/` — Play 商店"不兼容"提示与 vivo 商店页面对比截图（背景说明：Play 分发目录不含国行型号，与运行时支持无关，详见 AI_LOG 第 7 条）；`docs/evidence/003-react-bug-management/` — 计划 003 浏览器联合验收截图（桌面与 375px 窄屏正常列表、窄屏刷新失败提示）
 - `tools/ar-support-check/` — ARCore 支持检测工具源码与三张真机输出截图
 
 ## 复盘记录

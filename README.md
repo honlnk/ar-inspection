@@ -35,7 +35,7 @@
   adb install -r unity/Builds/inspection-dev.apk
   ```
 
-  EditMode 测试：`Unity -batchmode -projectPath unity -runTests -testPlatform EditMode -testResults <路径>/results.xml`（当前 26/26）。真机要求 ARCore 设备与相机授权（可 `adb shell pm grant com.honlnk.arinspection android.permission.CAMERA` 预授权）；开发构建左上角有黄色调试信息条（实时显示会话/平面/放置诊断，仅开发构建存在）。
+  EditMode 测试：`Unity -batchmode -projectPath unity -runTests -testPlatform EditMode -testResults <路径>/results.xml`（当前 31/31，含计划 005 新增的 AR 输入链路配置与门禁负例测试）。真机要求 ARCore 设备与相机授权（可 `adb shell pm grant com.honlnk.arinspection android.permission.CAMERA` 预授权）；开发构建左上角有黄色调试信息条（实时显示会话/平面/放置诊断，仅开发构建存在），并每 0.5 秒向 logcat 输出一行 `[ARCameraPose]`（相机位置/欧拉角/会话状态，`adb logcat -s Unity` 可读，用于验证手机运动是否驱动相机，仅开发构建存在）。
 - **Unity 放置诊断记录（仅开发构建）**：每次成功放置后，等待该帧渲染结束，保存同名的 PNG 截图与 JSON 数据。数据包含屏幕尺寸与点击位置、射线命中位置、全部已检平面的边界世界/屏幕坐标、黄色方块与点击位置的屏幕偏差、锚点、相机姿态/投影/内参与会话状态。屏幕坐标以左下角为原点，单位为像素；偏移的 Y 为负表示方块位于触点下方。记录位于应用私有目录，不自动上传、不自动删除，会占用手机存储；截图包含现场实景，导出和分享前需确认环境可披露。连接手机后可导出到电脑的临时目录：
 
   ```bash
@@ -46,7 +46,7 @@
   诊断记录位于 Android 应用外部文件目录，可直接导出，不使用跨应用私有目录的复制命令。原始截图和 AR 数据仍保留在手机中，上述命令不会清理设备文件。
 - **Unity 阶段门禁自检（SK-01/SK-02 自动验证）**：
   `/Applications/Unity/Hub/Editor/6000.3.27f1/Unity.app/Contents/MacOS/Unity -batchmode -quit -projectPath unity -executeMethod Inspection.EditorTools.GateVerify.Run -logFile unity/Logs/gate-verify.log`
-  （或在编辑器菜单「现场巡检 / 阶段门禁自检」查看），逐项输出 PASS/FAIL，任一项失败进程退出码非 0。最近一次结果：35/35 全部通过（2026-10-28 放置诊断增量复验，含诊断记录器接线、运行时接线、minSdk 29、Activity 入口与竖屏锁定检查）。自检不验证 Android 构建后的最终合并 Manifest，该结果不含此项。
+  （或在编辑器菜单「现场巡检 / 阶段门禁自检」查看），逐项输出 PASS/FAIL，任一项失败进程退出码非 0。最近一次结果：35/35 全部通过（2026-10-28 计划 005 复验：含新增「AR 输入链路精确检查」——AR Session 同对象唯一 AR 输入管理器、主相机唯一 Input System 姿态驱动、无旧版/弃用驱动、手持 AR 位置与旋转绑定齐全；对旧配置的负例拒绝由 EditMode 测试守卫）。自检不验证 Android 构建后的最终合并 Manifest，该结果不含此项。
 
 ## Unity 真机如何配置 Go 后端地址
 
@@ -114,15 +114,15 @@ curl -X PATCH http://localhost:8080/api/issues/<创建返回的id>/status -H 'Co
 - Unity 工程骨架：编辑器 6000.3.27f1 + Android 全套组件已安装；工程初始化完成（`Inspection.unity` 主场景含 AR 会话/AR 相机/仅水平平面检测/射线/锚点管理器/Canvas/EventSystem，Android IL2CPP+ARM64+Both 输入，ARCore Loader 已启用，自定义 Main Manifest 文件含 INTERNET 权限与 ARCore 包可见性声明）；编辑器实际打开无编译错误，初始化幂等已复验（重复 Loader 自动清理）。Custom Main Manifest 由标准路径下的 Manifest 文件启用，无需手动勾选
 - Unity 真机 AR 放置与上报业务（2026-10-28 计划 004）：Android 开发构建链路（命令行/菜单一键构建，合并 Manifest 含 INTERNET/CAMERA/ARCore queries/networkSecurityConfig）；真机平面检测与可视化（半透明色块 + 边界描线，手电补光按钮）；点击平面放置黄色标记（平面附锚，单草稿语义，距相机 >2m 或相机后方的伪命中自动拒绝，顶部「重置」一键重建地图）；「上报此标记」跟随按钮（投影跟随、出屏隐藏）；移动表单（标题必填/描述/优先级下拉/只读坐标）与全屏蒙层防误触；HTTP 上报（10 秒超时、六类响应分支中文提示）；后端地址运行时配置（首启引导一次、PlayerPrefs 持久）。EditMode 测试 26/26、门禁自检 35/35；真机完整链路验收通过——后端实测收到真机上报 `{"title":"111","position":{"x":-0.039,"y":0.303,"z":1.52}}` 全字段一致（AC-03 ✅，证据 `docs/evidence/004-unity-ar-place-report/`）
 - Unity 成功放置诊断记录（开发构建）：同名截图与结构化数据已接入，具体字段和导出方式见上文；构建和编辑器测试通过，五组真机记录已读取并完成双会话交叉验证，结论见复盘 002。
+- Unity AR 相机姿态与放置偏移修复（2026-10-28 计划 005）：AR Session 同对象补齐唯一 AR 输入管理器、主相机改用 Input System 姿态驱动并按官方绑定手持 AR 设备位置/旋转、初始化与搭建共用同一配置（幂等，副本两轮全量循环验证）；门禁升级为输入链路精确检查，EditMode 31/31（含负例）、门禁 35/35。**真机复验通过**：139 条相机姿态采样无冻结（位置三轴变化 0.46/0.27/0.60 m）、24 组放置标记世界坐标=命中点且屏幕投影与触点偏移 0px、世界锁定与平面对齐正常、UI 防误触/跟随按钮/上报成功与失败回归/地址重启保留全部通过（证据 `docs/evidence/005-unity-camera-pose-fix/verification-report.md`）。
 
 **未完成**
 
-- 完整三端联调（Unity 真机上报 → React 刷新可见 → 改状态 → 复核 → 重启数据保留）与演示视频（下一计划 005）
-- 已知问题「放置位置偏移」的修复（见下）
+- 完整三端联调（Unity 真机上报 → React 刷新可见 → 改状态 → 复核 → 重启数据保留）与演示视频（计划 005 偏移专项修复后顺延为下一编号计划）
 
 **已知问题**
 
-- **Unity 放置位置偏移（根因已定位，待修复复验，2026-10-28 更新）**：真机上 AR 虚拟层相对相机实景错位、标记落在触点下方或屏幕外。五组诊断证实 ARCore 会话与平面检测持续工作，但 Unity 渲染相机位置与旋转始终不变；场景使用旧版空间跟踪驱动且缺少 AR 输入管理器，手机姿态未进入渲染相机。已排除射线映射、投影矩阵、锚点额外偏移及 Vulkan 单一根因。修复方向是补齐 AR 输入管理器、改用 Input System 姿态驱动并同步初始化工具，不做坐标补偿；尚待实施和真机复验。完整证据与验收标准见 [复盘 002](docs/lessons/002-AR虚拟内容偏移与相机位姿冻结.md)，早期现象截图见 `docs/evidence/004-unity-ar-place-report/`。
+- **Unity 放置位置偏移（已修复并真机复验通过，2026-10-28 计划 005，留档）**：真机上 AR 虚拟层曾相对相机实景错位、标记落在触点下方或屏幕外。根因：AR Session 缺 AR 输入管理器、主相机误用旧版空间跟踪驱动，手机姿态未进入渲染相机。已按计划 005 修复并真机验证（详见「已完成」与 [复盘 002](docs/lessons/002-AR虚拟内容偏移与相机位姿冻结.md) 第 10 节）；证据 `docs/evidence/005-unity-camera-pose-fix/`。
 - **真机长时间运行发热降频（已缓解）**：持续扫描 + 手电常亮会使机身升温触发 Thermal Status Severe（实测电池 40.3°C），ARCore 识别随之变慢；已将 App 全局限帧 30fps（`AppFrameRate`）并建议短测多轮。iQOO Z9（骁龙 7 Gen 3）算力本身满足 ARCore 要求（SUPPORTED_INSTALLED），非算力瓶颈。
 - **真机切后台/息屏后相机失效（已定位，规避法有效）**：App 切后台再恢复后相机帧持续报 "The hardware buffer handle is null"、触摸无响应；`force-stop` 后重启即恢复。未做深度修复（涉及 ARCore 会话恢复生命周期），演示时注意保持亮屏。
 - **Unity 下载的地域限制（已解决，留档）**：Unity CDN（Akamai）按出口 IP 判定大中华区并重定向到 download.unitychina.cn（对 Unity 6 macOS 包一律 404）；本机机场的香港/日本节点 IP 段（ASN 134972）同样命中该判定，切换到「美国A01」节点后正常。后续下载 Unity 相关资源需保持美国/非大中华区出口节点。

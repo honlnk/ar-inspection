@@ -29,9 +29,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             </span>
           </div>
           <div className="hidden text-sm text-slate-500 md:block">园区巡检问题管理端</div>
-          <span className="shrink-0 rounded-full bg-brand-50 px-2.5 py-1 text-xs text-brand-700">
-            骨架阶段 · 未接数据
-          </span>
+          <span className="shrink-0 rounded-full bg-brand-50 px-2.5 py-1 text-xs text-brand-700">问题管理</span>
         </header>
         <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 md:px-6">{children}</main>
       </div>

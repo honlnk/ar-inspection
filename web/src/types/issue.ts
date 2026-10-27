@@ -24,3 +24,8 @@ export interface Issue {
   createdAt: string
   updatedAt: string
 }
+
+/** 状态修改请求体；只含 status 一个字段，其余字段一律不由客户端提交 */
+export interface StatusUpdateRequest {
+  status: Status
+}

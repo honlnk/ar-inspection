@@ -6,6 +6,8 @@ using UnityEditor.SceneManagement;
 using UnityEditor.Build;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.XR;
 using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
@@ -198,8 +200,11 @@ namespace Inspection.EditorTools
             light.type = LightType.Directional;
             lightGo.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
 
+            // 官方创建 AR Session 时同时挂会话与输入管理器（SceneUtils.CreateARSessionWithParent）；
+            // 输入管理器是手持 AR 设备姿态进入 Input System 的前提（计划 005）
             var sessionGo = new GameObject("AR Session");
             sessionGo.AddComponent<ARSession>();
+            sessionGo.AddComponent<ARInputManager>();
 
             var xrOriginGo = new GameObject("XR Origin");
             var xrOrigin = xrOriginGo.AddComponent<XROrigin>();
@@ -209,7 +214,7 @@ namespace Inspection.EditorTools
             var camera = cameraGo.AddComponent<Camera>();
             cameraGo.AddComponent<ARCameraManager>();
             cameraGo.AddComponent<ARCameraBackground>();
-            AddPoseDriver(cameraGo);
+            ConfigurePoseDriver(cameraGo.AddComponent<TrackedPoseDriver>());
             cameraGo.transform.SetParent(offsetGo.transform, false);
             cameraGo.tag = "MainCamera";
             xrOrigin.Camera = camera;
@@ -241,17 +246,92 @@ namespace Inspection.EditorTools
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
         }
 
-        private static void AddPoseDriver(GameObject cameraGo)
+        /// <summary>
+        /// 统一 AR 相机输入配置（计划 005），工程初始化与运行时搭建（SceneWiring）共用：
+        /// AR Session 同对象有且仅有一个 ARInputManager；XR Origin 主相机只保留一个
+        /// Input System 版 TrackedPoseDriver，删除旧版空间跟踪驱动与已弃用的 ARPoseDriver，
+        /// 并按官方移动 AR 创建逻辑绑定手持 AR 设备位置/旋转。任一前置对象缺失直接抛错，
+        /// 不再通过字符串查找旧组件并静默回退。
+        /// </summary>
+        public static void EnsureArcameraInput()
         {
-            // 优先 AR Foundation 自带的 AR Pose Driver；找不到时退回 SpatialTracking 的 TrackedPoseDriver
-            var poseDriverType = FindType("UnityEngine.XR.ARPoseDriver")
-                ?? FindType("UnityEngine.SpatialTracking.TrackedPoseDriver");
-            if (poseDriverType == null)
+            var session = UnityEngine.Object.FindFirstObjectByType<ARSession>();
+            if (session == null)
             {
-                Debug.LogWarning("[ProjectSetup] 未找到相机姿态驱动组件，请手动为 Main Camera 添加 AR Pose Driver。");
-                return;
+                throw new InvalidOperationException("场景缺少 ARSession，无法配置 AR 输入管理器。");
             }
-            cameraGo.AddComponent(poseDriverType);
+            var inputManagers = session.GetComponents<ARInputManager>();
+            for (var i = 1; i < inputManagers.Length; i++)
+            {
+                UnityEngine.Object.DestroyImmediate(inputManagers[i]);
+            }
+            if (inputManagers.Length == 0)
+            {
+                session.gameObject.AddComponent<ARInputManager>();
+            }
+
+            var xrOrigin = UnityEngine.Object.FindFirstObjectByType<XROrigin>();
+            if (xrOrigin == null || xrOrigin.Camera == null)
+            {
+                throw new InvalidOperationException("场景缺少 XR Origin 或主相机，无法配置相机姿态驱动。");
+            }
+            var cameraGo = xrOrigin.Camera.gameObject;
+            var driver = cameraGo.GetComponent<TrackedPoseDriver>();
+            var staleComponents = new List<Component>();
+            foreach (var component in cameraGo.GetComponents<Component>())
+            {
+                if (component == null)
+                {
+                    continue;
+                }
+                var type = component.GetType();
+                if (type == typeof(TrackedPoseDriver))
+                {
+                    if (driver == null)
+                    {
+                        driver = (TrackedPoseDriver)component;
+                    }
+                    else
+                    {
+                        staleComponents.Add(component); // 重复姿态驱动：只保留第一个
+                    }
+                    continue;
+                }
+                // 旧版空间跟踪驱动与已弃用 ARPoseDriver 按类型全名识别并删除，不与新驱动并存
+                var fullName = type.FullName;
+                if (fullName == "UnityEngine.SpatialTracking.TrackedPoseDriver"
+                    || fullName == "UnityEngine.XR.ARFoundation.ARPoseDriver")
+                {
+                    staleComponents.Add(component);
+                }
+            }
+            foreach (var stale in staleComponents)
+            {
+                UnityEngine.Object.DestroyImmediate(stale);
+            }
+            if (driver == null)
+            {
+                driver = cameraGo.AddComponent<TrackedPoseDriver>();
+            }
+            ConfigurePoseDriver(driver);
+        }
+
+        /// <summary>
+        /// 与 AR Foundation 6.6.2 官方 XROriginCreateUtil.CreateARMainCamera 完全一致的驱动配置：
+        /// 内嵌位置/旋转动作（随组件序列化，不建全局输入资产），每路各含 XRHMD 兼容绑定与
+        /// 手持 AR 设备绑定；trackingType/updateType 保持组件默认（RotationAndPosition /
+        /// UpdateAndBeforeRender），不自行发明分帧补偿或双驱动。
+        /// </summary>
+        private static void ConfigurePoseDriver(TrackedPoseDriver driver)
+        {
+            var positionAction = new InputAction(
+                "Position", binding: "<XRHMD>/centerEyePosition", expectedControlType: "Vector3");
+            positionAction.AddBinding("<HandheldARInputDevice>/devicePosition");
+            var rotationAction = new InputAction(
+                "Rotation", binding: "<XRHMD>/centerEyeRotation", expectedControlType: "Quaternion");
+            rotationAction.AddBinding("<HandheldARInputDevice>/deviceRotation");
+            driver.positionInput = new InputActionProperty(positionAction);
+            driver.rotationInput = new InputActionProperty(rotationAction);
         }
 
         private static SerializedObject GetPlayerSettingsObject()

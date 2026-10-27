@@ -4,7 +4,11 @@
     "references": [
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
-        "Inspection.Runtime"
+        "Inspection.Runtime",
+        "Inspection.EditorTools",
+        "Unity.XR.ARFoundation",
+        "Unity.XR.CoreUtils",
+        "Unity.InputSystem"
     ],
     "includePlatforms": [
         "Editor"

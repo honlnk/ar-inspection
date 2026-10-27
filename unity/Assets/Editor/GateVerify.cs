@@ -8,6 +8,8 @@ using UnityEditor.SceneManagement;
 using UnityEditor.Build;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.XR;
 using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
@@ -83,11 +85,17 @@ namespace Inspection.EditorTools
                     var cameraGo = xrOrigin.Camera.gameObject;
                     Check(cameraGo.GetComponent<ARCameraManager>() != null, "AR 相机含 ARCameraManager");
                     Check(cameraGo.GetComponent<ARCameraBackground>() != null, "AR 相机含 ARCameraBackground");
-                    var hasPoseDriver = cameraGo.GetComponents<Component>()
-                        .Any(c => c != null && (c.GetType().Name == "ARPoseDriver" || c.GetType().Name == "TrackedPoseDriver"));
-                    Check(hasPoseDriver, "AR 相机含姿态驱动组件（ARPoseDriver 或 TrackedPoseDriver）");
                 }
             }
+
+            // 计划 005：旧「有名字相近的姿态组件」检查升级为输入链路精确检查
+            var inputFailures = GetArcameraInputFailures();
+            foreach (var failure in inputFailures)
+            {
+                Check(false, failure);
+            }
+            Check(inputFailures.Count == 0,
+                "AR 输入链路精确检查：输入管理器唯一、Input System 姿态驱动唯一、无旧驱动、手持 AR 位置/旋转绑定齐全");
 
             var planeManager = UnityEngine.Object.FindFirstObjectByType<ARPlaneManager>();
             Check(planeManager != null && planeManager.requestedDetectionMode == PlaneDetectionMode.Horizontal,
@@ -175,6 +183,111 @@ namespace Inspection.EditorTools
                         "设置面板含全屏蒙层与居中弹窗");
                 }
             }
+        }
+
+        /// <summary>
+        /// 计划 005：AR 输入链路精确检查（作用于当前已打开场景），返回失败描述；空列表 = 通过。
+        /// 阶段门禁与 SceneWiring 保存后复检共用本方法，避免两套口径漂移。覆盖：
+        /// AR Session 同对象恰一个 ARInputManager；主相机恰一个 Input System 版姿态驱动；
+        /// 不存在旧版空间跟踪驱动、已弃用 ARPoseDriver 或重复驱动；位置/旋转输入动作
+        /// 随场景反序列化，且 XRHMD 兼容绑定与手持 AR 设备（HandheldARInputDevice）绑定齐全。
+        /// </summary>
+        public static List<string> GetArcameraInputFailures()
+        {
+            var failures = new List<string>();
+            var session = UnityEngine.Object.FindFirstObjectByType<ARSession>();
+            if (session == null)
+            {
+                failures.Add("场景缺少 ARSession");
+                return failures;
+            }
+            var inputManagerCount = session.GetComponents<ARInputManager>().Length;
+            if (inputManagerCount == 0)
+            {
+                failures.Add("AR Session 同对象缺少 AR 输入管理器（ARInputManager）");
+            }
+            else if (inputManagerCount > 1)
+            {
+                failures.Add($"AR Session 同对象有 {inputManagerCount} 个 ARInputManager（应恰 1 个）");
+            }
+
+            var xrOrigin = UnityEngine.Object.FindFirstObjectByType<XROrigin>();
+            if (xrOrigin == null || xrOrigin.Camera == null)
+            {
+                failures.Add("场景缺少 XR Origin 或其主相机");
+                return failures;
+            }
+            var cameraGo = xrOrigin.Camera.gameObject;
+
+            var drivers = cameraGo.GetComponents<TrackedPoseDriver>();
+            if (drivers.Length == 0)
+            {
+                failures.Add("主相机缺少 Input System 版姿态驱动（UnityEngine.InputSystem.XR.TrackedPoseDriver）");
+            }
+            else if (drivers.Length > 1)
+            {
+                failures.Add($"主相机有 {drivers.Length} 个 Input System 姿态驱动（应恰 1 个）");
+            }
+            foreach (var component in cameraGo.GetComponents<Component>())
+            {
+                if (component == null)
+                {
+                    continue;
+                }
+                var fullName = component.GetType().FullName;
+                if (fullName == "UnityEngine.SpatialTracking.TrackedPoseDriver")
+                {
+                    failures.Add("主相机仍存在旧版空间跟踪姿态驱动（SpatialTracking.TrackedPoseDriver）");
+                }
+                else if (fullName == "UnityEngine.XR.ARFoundation.ARPoseDriver")
+                {
+                    failures.Add("主相机仍存在已弃用的 ARPoseDriver（AR Foundation 6 已弃用）");
+                }
+            }
+
+            if (drivers.Length > 0)
+            {
+                failures.AddRange(GetPoseBindingFailures(
+                    "位置", drivers[0].positionInput, "<XRHMD>/centerEyePosition", "<HandheldARInputDevice>/devicePosition"));
+                failures.AddRange(GetPoseBindingFailures(
+                    "旋转", drivers[0].rotationInput, "<XRHMD>/centerEyeRotation", "<HandheldARInputDevice>/deviceRotation"));
+            }
+            return failures;
+        }
+
+        /// <summary>
+        /// 单路姿态输入的绑定检查。Input System 1.20 序列化层没有按绑定禁用的标志位，
+        /// 「绑定存在且启用」落实为：动作实例随场景反序列化可读（非空），且两路绑定路径
+        /// 都出现在动作的 bindings 列表中。
+        /// </summary>
+        private static List<string> GetPoseBindingFailures(
+            string label, InputActionProperty input, string hmdPath, string handheldPath)
+        {
+            var failures = new List<string>();
+            var action = input.action;
+            if (action == null)
+            {
+                failures.Add($"姿态驱动{label}输入动作未随场景序列化（读取为空）");
+                return failures;
+            }
+            foreach (var path in new[] { hmdPath, handheldPath })
+            {
+                var found = false;
+                foreach (var binding in action.bindings)
+                {
+                    if (binding.path == path)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    var owner = path == handheldPath ? "手持 AR 设备" : "头显兼容";
+                    failures.Add($"姿态驱动{label}输入缺少{owner}绑定 {path}");
+                }
+            }
+            return failures;
         }
 
         private static int GetPlayerSetting(string propertyPath)

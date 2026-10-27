@@ -67,6 +67,22 @@ namespace Inspection.AR
             // 同步写 logcat：截图 OCR 不可靠时用 adb logcat -s Unity 读同一行状态
             Debug.Log($"[ARDebug] {line1}");
             Debug.Log($"[ARDebug2] {line2}");
+
+            // 计划 005 运动冒烟：不放置也每 0.5s 输出一条相机姿态采样，与前后事件可区分，
+            // 用于证明真机上手持设备位置/旋转持续进入渲染相机；仅开发构建
+            var poseCamera = Camera.main;
+            if (poseCamera != null)
+            {
+                var euler = poseCamera.transform.rotation.eulerAngles;
+                Debug.Log("[ARCameraPose] t=" + Time.unscaledTime.ToString("F1")
+                    + " pos=(" + poseCamera.transform.position.x.ToString("F3")
+                    + "," + poseCamera.transform.position.y.ToString("F3")
+                    + "," + poseCamera.transform.position.z.ToString("F3")
+                    + ") euler=(" + euler.x.ToString("F1")
+                    + "," + euler.y.ToString("F1")
+                    + "," + euler.z.ToString("F1")
+                    + ") " + sessionState + "/" + reason);
+            }
         }
 
         /// <summary>草稿标记诊断段：无标记 / 无主相机 / 位置+距离+视口+渲染可见性。</summary>

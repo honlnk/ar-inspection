@@ -15,6 +15,8 @@ namespace Inspection.EditorTools
     /// 计划 004 阶段 2～5 的场景接线：创建标记/平面可视化 Prefab 与材质、搭建全部 UI
     /// （顶部栏、Toast、跟随上报按钮、表单面板、设置面板，均含全屏蒙层）、挂运行时脚本并接线。
     /// 幂等：重复执行时先销毁既有 AppUI 重建，Prefab 与材质存在则覆盖重存。
+    /// 计划 005 起，执行前先经 ProjectSetup.EnsureArcameraInput 统一 AR 输入链路
+    /// （输入管理器 + Input System 姿态驱动绑定），保存后复检，避免重建内容时遗漏相机配置。
     /// 菜单「现场巡检 / 搭建运行时内容（004）」，批处理 -executeMethod 同名可用。
     /// </summary>
     public static class SceneWiring
@@ -40,6 +42,10 @@ namespace Inspection.EditorTools
         {
             var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
 
+            // 计划 005：搭建前先统一 AR 输入链路（AR 输入管理器 + Input System 姿态驱动绑定），
+            // 与工程初始化共用 ProjectSetup.EnsureArcameraInput，不能只重建 UI 而遗漏相机配置
+            ProjectSetup.EnsureArcameraInput();
+
             var markerPrefab = BuildMarkerPrefab();
             var planePrefab = BuildPlaneVisualizerPrefab();
             WirePlaneManager(planePrefab);
@@ -54,6 +60,16 @@ namespace Inspection.EditorTools
 
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
+
+            // 计划 005：保存后按阶段门禁同口径复检 AR 输入链路，失败立即中止并保留失败信息，
+            // 不生成"看似完整"的场景
+            var inputFailures = GateVerify.GetArcameraInputFailures();
+            if (inputFailures.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "AR 输入链路保存后复检失败：" + string.Join("；", inputFailures));
+            }
+            Debug.Log("[SceneWiring] AR 输入链路复检通过：输入管理器、姿态驱动与绑定均已写入场景。");
             Debug.Log("[SceneWiring] 004 运行时内容搭建完成：Prefab、材质、UI 与脚本接线已保存。");
             if (Application.isBatchMode)
             {

@@ -31,8 +31,9 @@ namespace Inspection.EditorTools
                 }
             }
 
-            // ARCore 显示映射修正（真机攻坚 004）：Vulkan 下 AR 虚拟层相对相机画面存在整体下移错位
-            // （点击位置与放置结果系统性偏移），强制走 ARCore 最成熟的 OpenGL ES3 路径；幂等
+            // 保留 OpenGL ES 3（004 攻坚期由 Vulkan 切换而来）。复盘 002 已证实切换后偏移依旧，
+            // 根因是渲染相机未消费手持 AR 设备姿态，由计划 005 修复输入链路解决；
+            // 本设置不再承担偏移修复职责，仅作为 ARCore 成熟图形路径保留；幂等
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android, false);
             PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.OpenGLES3 });
 

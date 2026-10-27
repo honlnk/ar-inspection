@@ -16,7 +16,8 @@
         <package android:name="com.google.ar.core" />
     </queries>
 
-    <application>
+    <!-- networkSecurityConfig 引用 Plugins/Android/res/xml/ 下的明文放行配置（联调 http:// 后端） -->
+    <application android:networkSecurityConfig="@xml/network_security_config">
         <activity android:name="com.unity3d.player.UnityPlayerActivity"
                   android:theme="@style/UnityThemeSelector"
                   android:exported="true">

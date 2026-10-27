@@ -62,12 +62,15 @@ namespace Inspection.EditorTools
             PlayerSettings.SetApplicationIdentifier(android, AppIdentifier);
 
             // Android：IL2CPP + ARM64，目标 SDK 跟随编辑器默认。
-            // 计划要求最低 API 24，但 Unity 6000.3 引擎最低仅支持 API 25（Android 7.1），
-            // 已在计划文档施工日志记录该偏差；真机 Android 16 不受影响。
+            // 计划要求最低 API 24：Unity 6000.3 引擎下限 25（已记录偏差）；
+            // 首次构建实测 ARCore 6.6 + Vulkan 要求 minSdk ≥ 29，随之上调（真机 Android 16 不受影响）。
             PlayerSettings.SetScriptingBackend(android, ScriptingImplementation.IL2CPP);
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
-            PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel25;
+            PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel29;
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
+            // 入口必须是 Activity（UnityPlayerActivity）：自定义 Main Manifest 声明的就是它；
+            // GameActivity 入口会把该 Activity 合并成 enabled=false 且不注入 GameActivity，App 无法启动
+            PlayerSettings.Android.applicationEntry = AndroidApplicationEntry.Activity;
 
             // 局域网 HTTP 联调：仅开发构建允许明文流量（正式构建不允许）。
             // activeInputHandler 2=Both；insecureHttpOption 1=仅开发

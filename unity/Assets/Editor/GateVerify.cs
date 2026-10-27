@@ -40,6 +40,7 @@ namespace Inspection.EditorTools
             VerifyPlayerSettings();
             VerifyARCoreLoader();
             VerifyManifest();
+            VerifyRuntimeWiring();
 
             Report.AppendLine($"[GateVerify] 结果：{(_failures == 0 ? "全部通过" : $"{_failures} 项失败")}");
             Debug.Log(Report.ToString());
@@ -116,14 +117,64 @@ namespace Inspection.EditorTools
                 "Android 脚本后端为 IL2CPP");
             Check(PlayerSettings.Android.targetArchitectures == AndroidArchitecture.ARM64,
                 "Android 目标架构仅 ARM64");
-            // 计划要求 API 24；Unity 6000.3 引擎最低仅支持 API 25（已在计划文档记录偏差）
-            Check(PlayerSettings.Android.minSdkVersion == AndroidSdkVersions.AndroidApiLevel25,
-                "Android 最低 API 为 25（引擎下限，计划 24 的已记录偏差）");
+            // 计划要求 API 24 → 引擎下限 25；首次构建实测 ARCore 6.6 + Vulkan 要求 ≥ 29（计划文档记录偏差）
+            Check(PlayerSettings.Android.minSdkVersion == AndroidSdkVersions.AndroidApiLevel29,
+                "Android 最低 API 为 29（ARCore 6.6 + Vulkan 要求，计划 24/25 的已记录偏差）");
             // 以下两项在 6000.3 无公开读取 API，用 SerializedObject 按序列化字段名读取
             Check(GetPlayerSetting("activeInputHandler") == 2, "输入处理为 Both");
             Check(GetPlayerSetting("insecureHttpOption") == 1, "明文 HTTP 仅限开发构建");
             Check(PlayerSettings.GetApplicationIdentifier(android) == "com.honlnk.arinspection",
                 "Android 包名正确");
+            Check(PlayerSettings.Android.applicationEntry == AndroidApplicationEntry.Activity,
+                "Android 入口为 Activity（UnityPlayerActivity，与自定义 Main Manifest 一致；GameActivity 入口会使启动器被禁用）");
+            Check(PlayerSettings.defaultInterfaceOrientation == UIOrientation.Portrait,
+                "屏幕方向锁定竖屏 Portrait（计划 004 4.1）");
+        }
+
+        /// <summary>计划 004 新增：运行时脚本挂载、Prefab 引用与 UI 骨架（打开场景后检查）。</summary>
+        private static void VerifyRuntimeWiring()
+        {
+            // 依赖 VerifyScene 已打开主场景
+            var placement = UnityEngine.Object.FindFirstObjectByType<Inspection.AR.PlacementController>(FindObjectsInactive.Include);
+            Check(placement != null, "场景含 PlacementController（挂载在 XR Origin）");
+            if (placement != null)
+            {
+                var so = new SerializedObject(placement);
+                Check(so.FindProperty("markerPrefab").objectReferenceValue != null,
+                    "PlacementController 已引用 IssueMarker.prefab");
+                Check(so.FindProperty("formController").objectReferenceValue != null
+                    && so.FindProperty("reportButton").objectReferenceValue != null
+                    && so.FindProperty("settingsPanel").objectReferenceValue != null,
+                    "PlacementController 已接线表单/跟随按钮/设置面板");
+                Check(so.FindProperty("diagnostics").objectReferenceValue != null,
+                    "PlacementController 已接线开发构建放置诊断记录器");
+            }
+
+            var planeManager = UnityEngine.Object.FindFirstObjectByType<ARPlaneManager>();
+            Check(planeManager != null && planeManager.planePrefab != null,
+                "ARPlaneManager 已引用 PlaneVisualizer.prefab");
+
+            var canvas = UnityEngine.Object.FindFirstObjectByType<Canvas>();
+            if (canvas != null)
+            {
+                var appUi = canvas.transform.Find("AppUI");
+                Check(appUi != null
+                    && appUi.Find("FormPanelRoot") != null
+                    && appUi.Find("SettingsPanelRoot") != null
+                    && appUi.Find("ReportButtonRoot") != null
+                    && appUi.Find("ToastRoot") != null,
+                    "AppUI 骨架齐全（表单/设置/跟随按钮/Toast）");
+
+                if (appUi != null)
+                {
+                    var formRoot = appUi.Find("FormPanelRoot");
+                    Check(formRoot != null && formRoot.Find("Mask") != null && formRoot.Find("FormCard") != null,
+                        "表单面板含全屏蒙层与底部卡片");
+                    var settingsRoot = appUi.Find("SettingsPanelRoot");
+                    Check(settingsRoot != null && settingsRoot.Find("Mask") != null && settingsRoot.Find("SettingsCard") != null,
+                        "设置面板含全屏蒙层与居中弹窗");
+                }
+            }
         }
 
         private static int GetPlayerSetting(string propertyPath)

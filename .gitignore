@@ -6,6 +6,7 @@ unity/Library/
 unity/Temp/
 unity/Logs/
 unity/Build/
+unity/Builds/
 unity/UserSettings/
 unity/obj/
 unity/.vs/
@@ -33,3 +34,6 @@ local.properties
 
 # 检测工具构建产物
 tools/ar-support-check/build/
+unity/.utmp/
+unity/Assets/XR/Temp/
+unity/Assets/XR/Temp.meta

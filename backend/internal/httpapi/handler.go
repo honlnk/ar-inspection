@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ar-inspection/backend/internal/auth"
 	"ar-inspection/backend/internal/issue"
 )
 
@@ -14,16 +15,30 @@ import (
 // 通过 LimitReader 不读取无限请求体。
 const maxRequestBody = 1 << 20
 
-// Handler 持有路由依赖与问题服务端字段生成器。
+// Handler 持有路由依赖、问题服务端字段生成器、账号服务与实时事件中心。
 type Handler struct {
-	store  issue.Store
-	fields issue.FieldGenerator
+	store            issue.Store
+	fields           issue.FieldGenerator
+	auth             *auth.Service
+	hub              *Hub
+	wsOriginPatterns []string
 }
 
-// NewRouter 构建 Gin 引擎：统一响应、CORS、健康检查、问题业务接口与 404/405 统一错误。
-// fields 为服务端字段生成器，传入以便测试注入失败路径。
-func NewRouter(store issue.Store, corsOrigins []string, fields issue.FieldGenerator) *gin.Engine {
-	h := &Handler{store: store, fields: fields}
+// NewRouter 构建 Gin 引擎：统一响应、CORS（含凭据）、健康检查、账号接口、
+// 受保护的问题业务接口、管理员 WebSocket 与 404/405 统一错误。
+// 权限矩阵（计划 006 第 4.1 节）：
+//   - POST /api/issues            仅巡检员（服务端绑定创建人）
+//   - GET  /api/issues            登录即可；巡检员只见自己的，管理员见全部
+//   - PATCH /api/issues/:id/status 仅管理员
+//   - GET  /api/ws                仅管理员
+func NewRouter(store issue.Store, authService *auth.Service, corsOrigins []string, fields issue.FieldGenerator) *gin.Engine {
+	h := &Handler{
+		store:            store,
+		fields:           fields,
+		auth:             authService,
+		hub:              NewHub(),
+		wsOriginPatterns: originToPatterns(corsOrigins),
+	}
 
 	engine := gin.New()
 	engine.Use(gin.Logger(), gin.Recovery(), CORSMiddleware(corsOrigins))
@@ -37,11 +52,24 @@ func NewRouter(store issue.Store, corsOrigins []string, fields issue.FieldGenera
 
 	api := engine.Group("/api")
 	api.GET("/health", h.health)
-	api.GET("/issues", h.listIssues)
-	api.POST("/issues", h.createIssue)
-	api.PATCH("/issues/:id/status", h.updateStatus)
+
+	authGroup := api.Group("/auth")
+	authGroup.POST("/login", h.login)
+	// logout 不要求有效会话：令牌已过期/已撤销时重复退出幂等成功（目标状态已达成）
+	authGroup.POST("/logout", h.logout)
+	authGroup.GET("/me", h.Authenticate, h.me)
+
+	issues := api.Group("/issues", h.Authenticate)
+	issues.GET("", h.listIssues)
+	issues.POST("", RequireRole(auth.RoleInspector), h.createIssue)
+	issues.PATCH("/:id/status", RequireRole(auth.RoleAdmin), h.updateStatus)
+
+	api.GET("/ws", h.Authenticate, RequireRole(auth.RoleAdmin), h.handleWS)
 	return engine
 }
+
+// Hub 返回事件中心（测试与外部观测用）。
+func (h *Handler) Hub() *Hub { return h.hub }
 
 // health 健康检查：除进程存活外还实际执行存储轻量检查，存储不可用返回 503。
 func (h *Handler) health(c *gin.Context) {
@@ -52,9 +80,15 @@ func (h *Handler) health(c *gin.Context) {
 	ok(c, http.StatusOK, gin.H{"status": "ok"})
 }
 
-// listIssues 查询全部问题；查询失败返回 500 internal_error，不得用空数组伪装成功。
+// listIssues 按当前角色返回授权范围列表：巡检员仅见自己创建的问题，
+// 管理员见全部（含无归属记录的旧数据）。字段与既有问题契约完全一致。
 func (h *Handler) listIssues(c *gin.Context) {
-	issues, err := h.store.List(c.Request.Context())
+	user := CurrentUser(c)
+	ownerID := ""
+	if user.Role == auth.RoleInspector {
+		ownerID = auth.UserID(user.Username)
+	}
+	issues, err := h.store.List(c.Request.Context(), ownerID)
 	if err != nil {
 		h.internalError(c, "获取问题列表失败，请稍后重试", err)
 		return
@@ -62,8 +96,8 @@ func (h *Handler) listIssues(c *gin.Context) {
 	ok(c, http.StatusOK, issues)
 }
 
-// createIssue 创建问题：限制请求体大小、严格解析 JSON、由领域逻辑校验并生成
-// 服务端字段，事务写库成功后返回 201 与完整记录。
+// createIssue 创建问题（仅巡检员）：限制请求体大小、严格解析 JSON、由领域逻辑
+// 校验并生成服务端字段，事务写库（含创建人关联）成功后发布实时事件并返回 201。
 func (h *Handler) createIssue(c *gin.Context) {
 	body, readable := readBody(c)
 	if !readable {
@@ -79,11 +113,14 @@ func (h *Handler) createIssue(c *gin.Context) {
 		h.mapDomainError(c, err, "创建问题失败，请稍后重试")
 		return
 	}
-	stored, err := h.store.Create(c.Request.Context(), newIssue)
+	user := CurrentUser(c)
+	stored, err := h.store.Create(c.Request.Context(), newIssue, auth.UserID(user.Username))
 	if err != nil {
 		h.mapDomainError(c, err, "创建问题失败，请稍后重试")
 		return
 	}
+	// 存储事务提交成功后才发布事件；无连接时事件丢弃，由客户端全量校准兜底
+	h.hub.Publish("issue.created", stored)
 	ok(c, http.StatusCreated, stored)
 }
 
@@ -117,6 +154,8 @@ func (h *Handler) updateStatus(c *gin.Context) {
 		h.mapDomainError(c, err, "修改状态失败，请稍后重试")
 		return
 	}
+	// 存储事务提交成功后才发布事件
+	h.hub.Publish("issue.updated", stored)
 	ok(c, http.StatusOK, stored)
 }
 

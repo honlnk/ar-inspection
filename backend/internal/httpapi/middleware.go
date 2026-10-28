@@ -8,8 +8,9 @@ import (
 )
 
 // CORSMiddleware 按配置的前端来源放行跨域请求。
-// 允许 GET/POST/PATCH/OPTIONS 方法与 Content-Type 请求头；预检返回 204。
-// 首版不使用 Cookie 或浏览器凭据，因此不设置 Allow-Credentials。
+// 计划 006 起管理端依赖会话 Cookie，因此放行来源同时允许凭据（Allow-Credentials），
+// 并放行 Authorization 头（Unity/工具使用 Bearer 令牌）；预检返回 204。
+// 不使用通配符来源——凭据模式下浏览器也拒绝 *。
 func CORSMiddleware(origins []string) gin.HandlerFunc {
 	allowed := make(map[string]struct{}, len(origins))
 	for _, o := range origins {
@@ -24,8 +25,9 @@ func CORSMiddleware(origins []string) gin.HandlerFunc {
 		if origin := c.GetHeader("Origin"); origin != "" {
 			if _, isAllowed := allowed[origin]; isAllowed {
 				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Access-Control-Allow-Credentials", "true")
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
-				c.Header("Access-Control-Allow-Headers", "Content-Type")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			}
 		}
 		if c.Request.Method == http.MethodOptions {

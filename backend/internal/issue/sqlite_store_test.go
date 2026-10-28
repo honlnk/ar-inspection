@@ -66,7 +66,7 @@ func TestInit_CreatesTableAndIndex(t *testing.T) {
 func TestList_EmptyDatabaseReturnsEmptySlice(t *testing.T) {
 	store := newTempStore(t)
 
-	issues, err := store.List(context.Background())
+	issues, err := store.List(context.Background(), "")
 	if err != nil {
 		t.Fatalf("查询空库列表失败: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestReopen_PersistsAcrossReconnect(t *testing.T) {
 		t.Fatalf("重新初始化失败: %v", err)
 	}
 
-	issues, err := second.List(context.Background())
+	issues, err := second.List(context.Background(), "")
 	if err != nil {
 		t.Fatalf("重连后查询失败: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestCreate_ReturnsCommittedRecord(t *testing.T) {
 	store := newTempStore(t)
 
 	want := buildTestIssue("issue-create-1")
-	got, err := store.Create(context.Background(), want)
+	got, err := store.Create(context.Background(), want, "")
 	if err != nil {
 		t.Fatalf("创建问题失败: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestCreate_ReturnsCommittedRecord(t *testing.T) {
 		t.Fatalf("返回记录与写入不一致:\n得到 %+v\n期望 %+v", got, want)
 	}
 
-	issues, err := store.List(context.Background())
+	issues, err := store.List(context.Background(), "")
 	if err != nil {
 		t.Fatalf("查询列表失败: %v", err)
 	}
@@ -248,16 +248,16 @@ func TestCreate_DuplicateIDFailsNoPartial(t *testing.T) {
 	store := newTempStore(t)
 
 	first := buildTestIssue("issue-dup")
-	if _, err := store.Create(context.Background(), first); err != nil {
+	if _, err := store.Create(context.Background(), first, ""); err != nil {
 		t.Fatalf("首次创建失败: %v", err)
 	}
 	second := buildTestIssue("issue-dup")
 	second.Title = "另一条同 ID 记录"
-	if _, err := store.Create(context.Background(), second); err == nil {
+	if _, err := store.Create(context.Background(), second, ""); err == nil {
 		t.Fatal("重复 ID 创建必须失败")
 	}
 
-	issues, err := store.List(context.Background())
+	issues, err := store.List(context.Background(), "")
 	if err != nil {
 		t.Fatalf("查询列表失败: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestCreate_ClosedStoreFailsCleanly(t *testing.T) {
 		t.Fatalf("关闭数据库失败: %v", err)
 	}
 
-	if _, err := store.Create(context.Background(), buildTestIssue("issue-closed")); err == nil {
+	if _, err := store.Create(context.Background(), buildTestIssue("issue-closed"), ""); err == nil {
 		t.Fatal("存储关闭后创建必须失败")
 	}
 
@@ -290,7 +290,7 @@ func TestCreate_ClosedStoreFailsCleanly(t *testing.T) {
 		t.Fatalf("重新打开数据库失败: %v", err)
 	}
 	defer reopened.Close()
-	issues, err := reopened.List(context.Background())
+	issues, err := reopened.List(context.Background(), "")
 	if err != nil {
 		t.Fatalf("重开查询失败: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestCreate_ClosedStoreFailsCleanly(t *testing.T) {
 func TestUpdateStatus_AllTransitionsAndRepeat(t *testing.T) {
 	store := newTempStore(t)
 
-	created, err := store.Create(context.Background(), buildTestIssue("issue-status"))
+	created, err := store.Create(context.Background(), buildTestIssue("issue-status"), "")
 	if err != nil {
 		t.Fatalf("创建问题失败: %v", err)
 	}
@@ -339,14 +339,14 @@ func TestUpdateStatus_AllTransitionsAndRepeat(t *testing.T) {
 func TestUpdateStatus_NotFound(t *testing.T) {
 	store := newTempStore(t)
 
-	if _, err := store.Create(context.Background(), buildTestIssue("issue-exist")); err != nil {
+	if _, err := store.Create(context.Background(), buildTestIssue("issue-exist"), ""); err != nil {
 		t.Fatalf("创建问题失败: %v", err)
 	}
 	if _, err := store.UpdateStatus(context.Background(), "00000000-0000-4000-8000-000000000000", StatusResolved, "2026-10-27T14:00:00+08:00"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("期望 ErrNotFound，实际 %v", err)
 	}
 
-	issues, err := store.List(context.Background())
+	issues, err := store.List(context.Background(), "")
 	if err != nil {
 		t.Fatalf("查询列表失败: %v", err)
 	}
@@ -370,12 +370,12 @@ func TestList_OrdersByCreatedAtDescThenIDASC(t *testing.T) {
 		it := buildTestIssue(r.id)
 		it.CreatedAt = r.createdAt
 		it.UpdatedAt = r.createdAt
-		if _, err := store.Create(context.Background(), it); err != nil {
+		if _, err := store.Create(context.Background(), it, ""); err != nil {
 			t.Fatalf("写入 %s 失败: %v", r.id, err)
 		}
 	}
 
-	issues, err := store.List(context.Background())
+	issues, err := store.List(context.Background(), "")
 	if err != nil {
 		t.Fatalf("查询列表失败: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestCreateReopen_PersistsIssueAndStatus(t *testing.T) {
 	if err := first.Init(context.Background()); err != nil {
 		t.Fatalf("初始化数据库失败: %v", err)
 	}
-	created, err := first.Create(context.Background(), buildTestIssue("issue-reopen"))
+	created, err := first.Create(context.Background(), buildTestIssue("issue-reopen"), "")
 	if err != nil {
 		t.Fatalf("创建问题失败: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestCreateReopen_PersistsIssueAndStatus(t *testing.T) {
 		t.Fatalf("重新初始化失败: %v", err)
 	}
 
-	issues, err := second.List(context.Background())
+	issues, err := second.List(context.Background(), "")
 	if err != nil {
 		t.Fatalf("重开查询失败: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestStore_SQLInjectionTitleTreatedAsText(t *testing.T) {
 	injectTitle := `破损'); DROP TABLE issues;-- `
 	it := buildTestIssue("issue-inject")
 	it.Title = injectTitle
-	got, err := store.Create(context.Background(), it)
+	got, err := store.Create(context.Background(), it, "")
 	if err != nil {
 		t.Fatalf("创建含注入样式标题的问题失败: %v", err)
 	}
@@ -462,7 +462,7 @@ func TestStore_SQLInjectionTitleTreatedAsText(t *testing.T) {
 		t.Fatal("issues 表不应被注入破坏")
 	}
 
-	issues, err := store.List(context.Background())
+	issues, err := store.List(context.Background(), "")
 	if err != nil {
 		t.Fatalf("查询列表失败: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestStore_CheckConstraintsRejectInvalidEnums(t *testing.T) {
 		t.Fatal("非法状态应被 CHECK 约束拒绝")
 	}
 
-	issues, err := store.List(context.Background())
+	issues, err := store.List(context.Background(), "")
 	if err != nil {
 		t.Fatalf("查询列表失败: %v", err)
 	}

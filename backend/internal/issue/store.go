@@ -16,12 +16,14 @@ type Store interface {
 	// HealthCheck 对存储做轻量检查，供健康检查接口判断存储可用性。
 	HealthCheck(ctx context.Context) error
 
-	// List 按 createdAt 从新到旧返回全部问题；空库返回空切片而不是 nil。
-	List(ctx context.Context) ([]Issue, error)
+	// List 按 createdAt 从新到旧返回问题；空库返回空切片而不是 nil。
+	// ownerID 非空时只返回该账号创建的问题（计划 006 数据范围规则）；
+	// 空字符串返回全部，供管理员与旧数据（无归属记录）使用。
+	List(ctx context.Context, ownerID string) ([]Issue, error)
 
-	// Create 在事务中写入新问题，提交成功后读取并返回完整记录；
-	// 写入或提交失败时整体回滚，不返回成功。
-	Create(ctx context.Context, it Issue) (Issue, error)
+	// Create 在事务中写入新问题，ownerID 非空时同时写入归属关联，
+	// 提交成功后读取并返回完整记录；写入或提交失败时整体回滚，不返回成功。
+	Create(ctx context.Context, it Issue, ownerID string) (Issue, error)
 
 	// UpdateStatus 在事务中更新状态与更新时间，提交成功后读取并返回完整记录；
 	// 目标 ID 不存在时返回 ErrNotFound，不产生部分更新。

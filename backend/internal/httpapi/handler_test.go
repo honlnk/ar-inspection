@@ -14,20 +14,40 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ar-inspection/backend/internal/auth"
 	"ar-inspection/backend/internal/issue"
 )
 
-// newTestRouter 用临时 SQLite 存储与默认字段生成器构建路由，返回可关闭的存储用于模拟故障。
-func newTestRouter(t *testing.T) (*gin.Engine, *issue.SQLiteStore) {
+// testEnv 测试环境：路由、问题存储与预登录的两个角色令牌。
+type testEnv struct {
+	Router    *gin.Engine
+	Store     *issue.SQLiteStore
+	AuthStore *auth.SQLiteStore
+	dbPath    string // 供重启类测试在同一文件上重建路由
+	Inspector string // 巡检员 Bearer 令牌
+	Admin     string // 管理员 Bearer 令牌
+}
+
+// 测试账号密码：仅测试进程内使用，不落入任何仓库文件。
+const (
+	testInspectorPassword = "test-inspector-pw"
+	testAdminPassword     = "test-admin-pw"
+	testSessionSecret     = "test-session-secret-0123456789abcdef"
+)
+
+// newTestRouter 用临时 SQLite 存储与默认字段生成器构建路由，
+// 预建立两个演示账号并完成登录，返回带令牌的测试环境。
+func newTestRouter(t *testing.T) *testEnv {
 	t.Helper()
 	return newTestRouterWithFields(t, issue.DefaultFieldGenerator())
 }
 
-// newTestRouterWithFields 用指定字段生成器构建路由，用于注入 ID/时间生成失败路径。
-func newTestRouterWithFields(t *testing.T, fields issue.FieldGenerator) (*gin.Engine, *issue.SQLiteStore) {
+// newTestRouterWithFields 用指定字段生成器构建环境，用于注入 ID/时间生成失败路径。
+func newTestRouterWithFields(t *testing.T, fields issue.FieldGenerator) *testEnv {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	store, err := issue.OpenSQLite(filepath.Join(t.TempDir(), "inspection.db"))
+	dbPath := filepath.Join(t.TempDir(), "inspection.db")
+	store, err := issue.OpenSQLite(dbPath)
 	if err != nil {
 		t.Fatalf("打开临时数据库失败: %v", err)
 	}
@@ -35,16 +55,67 @@ func newTestRouterWithFields(t *testing.T, fields issue.FieldGenerator) (*gin.En
 	if err := store.Init(context.Background()); err != nil {
 		t.Fatalf("初始化临时数据库失败: %v", err)
 	}
-	router := NewRouter(store, []string{"http://localhost:5173", "http://127.0.0.1:5173"}, fields)
-	return router, store
+
+	authStore, err := auth.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("打开临时账号库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = authStore.Close() })
+	if err := authStore.Init(context.Background()); err != nil {
+		t.Fatalf("初始化临时账号库失败: %v", err)
+	}
+	authService := auth.NewService(authStore, []byte(testSessionSecret))
+	ctx := context.Background()
+	if err := authService.EnsureAccounts(ctx, testInspectorPassword, testAdminPassword); err != nil {
+		t.Fatalf("建立测试账号失败: %v", err)
+	}
+	router := NewRouter(store, authService, []string{"http://localhost:5173", "http://127.0.0.1:5173"}, fields)
+
+	env := &testEnv{Router: router, Store: store, AuthStore: authStore, dbPath: dbPath}
+	env.Inspector = loginForTest(t, router, "inspector", testInspectorPassword)
+	env.Admin = loginForTest(t, router, "admin", testAdminPassword)
+	return env
+}
+
+// loginForTest 通过真实登录接口换取 Bearer 令牌。
+func loginForTest(t *testing.T, router *gin.Engine, username, password string) string {
+	t.Helper()
+	rec := doJSON(router, http.MethodPost, "/api/auth/login",
+		`{"username":"`+username+`","password":"`+password+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("测试登录 %s 失败: %d %s", username, rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Username string `json:"username"`
+			Role     string `json:"role"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析登录响应失败: %v", err)
+	}
+	if resp.Data.Username != username {
+		t.Fatalf("登录返回用户不符: %+v", resp.Data)
+	}
+	return extractSessionCookie(rec)
+}
+
+// extractSessionCookie 从登录响应的 Set-Cookie 中提取会话令牌。
+func extractSessionCookie(rec *httptest.ResponseRecorder) string {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			return c.Value
+		}
+	}
+	return ""
 }
 
 // TestHealth_OK 验证存储可用时健康检查返回 200 与统一成功结构。
 func TestHealth_OK(t *testing.T) {
-	router, _ := newTestRouter(t)
+	env := newTestRouter(t)
 
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	env.Router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("期望 200，实际 %d，响应 %s", rec.Code, rec.Body.String())
@@ -67,14 +138,14 @@ func TestHealth_OK(t *testing.T) {
 
 // TestHealth_StorageUnavailable 验证存储不可用时返回 503 service_unavailable，而非仅报进程存活。
 func TestHealth_StorageUnavailable(t *testing.T) {
-	router, store := newTestRouter(t)
+	env := newTestRouter(t)
 	// 关闭底层连接，模拟存储故障；后续健康检查失败。
-	if err := store.Close(); err != nil {
+	if err := env.Store.Close(); err != nil {
 		t.Fatalf("关闭存储失败: %v", err)
 	}
 
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	env.Router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("期望 503，实际 %d，响应 %s", rec.Code, rec.Body.String())
@@ -117,7 +188,18 @@ func TestHealth_CorruptedStorageReturns503(t *testing.T) {
 		t.Fatalf("重新打开损坏数据库失败: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	router := NewRouter(reopened, []string{"http://localhost:5173"}, issue.DefaultFieldGenerator())
+	// 问题库已损坏，本测试只验证匿名健康检查路径：账号库用独立完好文件，
+	// 避免 auth 连接初始化失败干扰 503 断言。
+	authStore, err := auth.OpenSQLite(filepath.Join(t.TempDir(), "auth-only.db"))
+	if err != nil {
+		t.Fatalf("打开临时账号库失败: %v", err)
+	}
+	t.Cleanup(func() { _ = authStore.Close() })
+	if err := authStore.Init(context.Background()); err != nil {
+		t.Fatalf("初始化临时账号库失败: %v", err)
+	}
+	authService := auth.NewService(authStore, []byte(testSessionSecret))
+	router := NewRouter(reopened, authService, []string{"http://localhost:5173"}, issue.DefaultFieldGenerator())
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
@@ -140,10 +222,10 @@ func TestHealth_CorruptedStorageReturns503(t *testing.T) {
 
 // TestUnknownRoute 验证未知路径返回统一 404 错误结构。
 func TestUnknownRoute(t *testing.T) {
-	router, _ := newTestRouter(t)
+	env := newTestRouter(t)
 
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/nope", nil))
+	env.Router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/nope", nil))
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("期望 404，实际 %d", rec.Code)
@@ -163,10 +245,10 @@ func TestUnknownRoute(t *testing.T) {
 
 // TestMethodNotAllowed 验证已知路径用不支持的方法返回统一 405 错误结构。
 func TestMethodNotAllowed(t *testing.T) {
-	router, _ := newTestRouter(t)
+	env := newTestRouter(t)
 
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/health", nil))
+	env.Router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/health", nil))
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("期望 405，实际 %d", rec.Code)
@@ -186,13 +268,13 @@ func TestMethodNotAllowed(t *testing.T) {
 
 // TestCORS_PreflightAllowedOrigin 验证允许来源的预检返回 204 与放行头。
 func TestCORS_PreflightAllowedOrigin(t *testing.T) {
-	router, _ := newTestRouter(t)
+	env := newTestRouter(t)
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/health", nil)
 	req.Header.Set("Origin", "http://localhost:5173")
 	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	env.Router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("期望预检 204，实际 %d", rec.Code)
@@ -210,24 +292,38 @@ func TestCORS_PreflightAllowedOrigin(t *testing.T) {
 
 // TestCORS_DisallowedOriginNoExpose 验证未配置来源不回写 ACAO 头。
 func TestCORS_DisallowedOriginNoExpose(t *testing.T) {
-	router, _ := newTestRouter(t)
+	env := newTestRouter(t)
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/health", nil)
 	req.Header.Set("Origin", "http://evil.example.com")
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	env.Router.ServeHTTP(rec, req)
 
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("不允许的来源不应回写 ACAO，实际 %q", got)
 	}
 }
 
-// doJSON 以 JSON 请求体发起 HTTP 请求并返回响应记录器。
+// doJSON 以 JSON 请求体发起匿名 HTTP 请求并返回响应记录器（健康检查、登录等）。
 func doJSON(router *gin.Engine, method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
+	return rec
+}
+
+// doJSONAs 以 Bearer 令牌发起认证请求；role 决定使用哪个测试账号。
+func doJSONAs(env *testEnv, role auth.Role, method, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	token := env.Admin
+	if role == auth.RoleInspector {
+		token = env.Inspector
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	env.Router.ServeHTTP(rec, req)
 	return rec
 }
 
@@ -274,11 +370,11 @@ func assertNoErrorKey(t *testing.T, rec *httptest.ResponseRecorder) {
 	}
 }
 
-// createIssueViaHTTP 通过真实 HTTP 请求创建一条问题并返回响应中的记录。
-func createIssueViaHTTP(t *testing.T, router *gin.Engine) map[string]any {
+// createIssueViaHTTP 以巡检员身份通过真实 HTTP 请求创建一条问题并返回响应中的记录。
+func createIssueViaHTTP(t *testing.T, env *testEnv) map[string]any {
 	t.Helper()
 	body := `{"title":"入口墙面破损","description":"左侧墙体存在裂缝","priority":"high","position":{"x":0.42,"y":0.03,"z":1.26}}`
-	rec := doJSON(router, http.MethodPost, "/api/issues", body)
+	rec := doJSONAs(env, auth.RoleInspector, http.MethodPost, "/api/issues", body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("创建问题期望 201，实际 %d，响应 %s", rec.Code, rec.Body.String())
 	}
@@ -294,9 +390,9 @@ func createIssueViaHTTP(t *testing.T, router *gin.Engine) map[string]any {
 // TestCreateIssue_Created 验证合法创建返回 201、完整字段、服务端字段由后端生成
 // （标题 trim 保存、默认 open、初始时间相同且带 +08:00）。
 func TestCreateIssue_Created(t *testing.T) {
-	router, _ := newTestRouter(t)
+	env := newTestRouter(t)
 
-	rec := doJSON(router, http.MethodPost, "/api/issues",
+	rec := doJSONAs(env, auth.RoleInspector, http.MethodPost, "/api/issues",
 		`{"title":"  入口墙面破损  ","description":"左侧墙体存在裂缝","priority":"high","position":{"x":0.42,"y":0,"z":-1.26}}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("期望 201，实际 %d，响应 %s", rec.Code, rec.Body.String())
@@ -379,11 +475,11 @@ func TestCreateIssue_InvalidRequests(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			router, _ := newTestRouter(t)
-			rec := doJSON(router, http.MethodPost, "/api/issues", tc.body)
+			env := newTestRouter(t)
+			rec := doJSONAs(env, auth.RoleInspector, http.MethodPost, "/api/issues", tc.body)
 			assertErrorEnvelope(t, rec, http.StatusBadRequest, "invalid_argument")
 
-			listRec := doJSON(router, http.MethodGet, "/api/issues", "")
+			listRec := doJSONAs(env, auth.RoleAdmin, http.MethodGet, "/api/issues", "")
 			var listResp struct {
 				Data []json.RawMessage `json:"data"`
 			}
@@ -399,19 +495,19 @@ func TestCreateIssue_InvalidRequests(t *testing.T) {
 
 // TestCreateIssue_BodyTooLarge 验证超过 1 MiB 的请求体返回 400，不会全部读取。
 func TestCreateIssue_BodyTooLarge(t *testing.T) {
-	router, _ := newTestRouter(t)
+	env := newTestRouter(t)
 
 	padding := strings.Repeat("A", (1<<20)+16)
 	body := `{"title":"t","description":"` + padding + `","priority":"low","position":{"x":1,"y":2,"z":3}}`
-	rec := doJSON(router, http.MethodPost, "/api/issues", body)
+	rec := doJSONAs(env, auth.RoleInspector, http.MethodPost, "/api/issues", body)
 	assertErrorEnvelope(t, rec, http.StatusBadRequest, "invalid_argument")
 }
 
 // TestList_EmptyIsJSONArray 验证空库列表返回 { "data": [] }，不返回 null。
 func TestList_EmptyIsJSONArray(t *testing.T) {
-	router, _ := newTestRouter(t)
+	env := newTestRouter(t)
 
-	rec := doJSON(router, http.MethodGet, "/api/issues", "")
+	rec := doJSONAs(env, auth.RoleAdmin, http.MethodGet, "/api/issues", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("期望 200，实际 %d，响应 %s", rec.Code, rec.Body.String())
 	}
@@ -423,8 +519,8 @@ func TestList_EmptyIsJSONArray(t *testing.T) {
 // TestIssueChain_CreateThenPatchThenList 验证后端内部链路使用同一条记录：
 // 创建返回的 ID 可直接用于状态接口与列表接口（阶段 3 门禁）。
 func TestIssueChain_CreateThenPatchThenList(t *testing.T) {
-	router, _ := newTestRouter(t)
-	created := createIssueViaHTTP(t, router)
+	env := newTestRouter(t)
+	created := createIssueViaHTTP(t, env)
 	id, _ := created["id"].(string)
 	if id == "" {
 		t.Fatalf("创建响应缺少 id: %v", created)
@@ -432,7 +528,7 @@ func TestIssueChain_CreateThenPatchThenList(t *testing.T) {
 
 	// 任意状态转换：open → in_progress → resolved → open，重复设置同一状态也成功。
 	for _, status := range []string{"in_progress", "resolved", "open", "open"} {
-		rec := doJSON(router, http.MethodPatch, "/api/issues/"+id+"/status", `{"status":"`+status+`"}`)
+		rec := doJSONAs(env, auth.RoleAdmin, http.MethodPatch, "/api/issues/"+id+"/status", `{"status":"`+status+`"}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("更新为 %s 期望 200，实际 %d，响应 %s", status, rec.Code, rec.Body.String())
 		}
@@ -455,7 +551,7 @@ func TestIssueChain_CreateThenPatchThenList(t *testing.T) {
 		}
 	}
 
-	listRec := doJSON(router, http.MethodGet, "/api/issues", "")
+	listRec := doJSONAs(env, auth.RoleAdmin, http.MethodGet, "/api/issues", "")
 	var listResp struct {
 		Data []struct {
 			ID     string `json:"id"`
@@ -474,8 +570,8 @@ func TestIssueChain_CreateThenPatchThenList(t *testing.T) {
 // 返回 400；合法格式但不存在的 ID 返回 404 issue_not_found；
 // 非法状态配合不存在的 ID 返回 400（先校验后查库）；空 ID 路径由路由统一 404。
 func TestUpdateStatus_Errors(t *testing.T) {
-	router, _ := newTestRouter(t)
-	created := createIssueViaHTTP(t, router)
+	env := newTestRouter(t)
+	created := createIssueViaHTTP(t, env)
 	id, _ := created["id"].(string)
 
 	cases := []struct {
@@ -500,13 +596,13 @@ func TestUpdateStatus_Errors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := doJSON(router, http.MethodPatch, tc.path, tc.body)
+			rec := doJSONAs(env, auth.RoleAdmin, http.MethodPatch, tc.path, tc.body)
 			assertErrorEnvelope(t, rec, tc.wantStatus, tc.wantCode)
 		})
 	}
 
 	// 负例不应改动已创建记录的状态。
-	listRec := doJSON(router, http.MethodGet, "/api/issues", "")
+	listRec := doJSONAs(env, auth.RoleAdmin, http.MethodGet, "/api/issues", "")
 	if !strings.Contains(listRec.Body.String(), `"status":"open"`) {
 		t.Fatalf("负例不应改变现有记录状态: %s", listRec.Body.String())
 	}
@@ -515,24 +611,26 @@ func TestUpdateStatus_Errors(t *testing.T) {
 // TestIssues_StorageFailureReturns500 验证存储故障时三个业务接口都返回
 // 500 internal_error（列表不得用空数组伪装成功），且响应不泄露 SQL、路径或堆栈。
 func TestIssues_StorageFailureReturns500(t *testing.T) {
-	router, store := newTestRouter(t)
-	if err := store.Close(); err != nil {
+	env := newTestRouter(t)
+	if err := env.Store.Close(); err != nil {
 		t.Fatalf("关闭存储失败: %v", err)
 	}
 
+	// 认证库未关闭：认证可正常通过，随后问题存储操作失败映射为 500。
 	requests := []struct {
 		name   string
 		method string
 		path   string
 		body   string
+		role   auth.Role
 	}{
-		{"创建", http.MethodPost, "/api/issues", `{"title":"t","priority":"low","position":{"x":1,"y":2,"z":3}}`},
-		{"列表", http.MethodGet, "/api/issues", ""},
-		{"改状态", http.MethodPatch, "/api/issues/any-id/status", `{"status":"open"}`},
+		{"创建", http.MethodPost, "/api/issues", `{"title":"t","priority":"low","position":{"x":1,"y":2,"z":3}}`, auth.RoleInspector},
+		{"列表", http.MethodGet, "/api/issues", "", auth.RoleAdmin},
+		{"改状态", http.MethodPatch, "/api/issues/any-id/status", `{"status":"open"}`, auth.RoleAdmin},
 	}
 	for _, req := range requests {
 		t.Run(req.name, func(t *testing.T) {
-			rec := doJSON(router, req.method, req.path, req.body)
+			rec := doJSONAs(env, req.role, req.method, req.path, req.body)
 			assertErrorEnvelope(t, rec, http.StatusInternalServerError, "internal_error")
 			for _, leak := range []string{"sql", "database", ".db", "/Users", "goroutine", "modernc"} {
 				if strings.Contains(rec.Body.String(), leak) {
@@ -550,9 +648,9 @@ func TestCreateIssue_GeneratorFailureReturns500(t *testing.T) {
 		NewID:  func() (string, error) { return "", assertFailErr },
 		NewNow: func() (string, error) { return "2026-10-27T12:00:00+08:00", nil },
 	}
-	router, _ := newTestRouterWithFields(t, failGen)
+	env := newTestRouterWithFields(t, failGen)
 
-	rec := doJSON(router, http.MethodPost, "/api/issues",
+	rec := doJSONAs(env, auth.RoleInspector, http.MethodPost, "/api/issues",
 		`{"title":"t","priority":"low","position":{"x":1,"y":2,"z":3}}`)
 	assertErrorEnvelope(t, rec, http.StatusInternalServerError, "internal_error")
 }
@@ -563,13 +661,13 @@ var assertFailErr = errors.New("注入的生成失败")
 // TestCORS_IssuesPreflightAllowedOrigin 验证问题接口的预检返回 204、
 // 放行 PATCH/POST，并带 Vary: Origin。
 func TestCORS_IssuesPreflightAllowedOrigin(t *testing.T) {
-	router, _ := newTestRouter(t)
+	env := newTestRouter(t)
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/issues", nil)
 	req.Header.Set("Origin", "http://localhost:5173")
 	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	env.Router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("期望预检 204，实际 %d", rec.Code)
@@ -586,14 +684,15 @@ func TestCORS_IssuesPreflightAllowedOrigin(t *testing.T) {
 
 // TestCORS_AllowedOriginActualRequest 验证允许来源的实际跨域请求回写 ACAO 头。
 func TestCORS_AllowedOriginActualRequest(t *testing.T) {
-	router, _ := newTestRouter(t)
+	env := newTestRouter(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/issues",
 		strings.NewReader(`{"title":"t","priority":"low","position":{"x":1,"y":2,"z":3}}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://127.0.0.1:5173")
+	req.Header.Set("Authorization", "Bearer "+env.Inspector)
 	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	env.Router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("期望 201，实际 %d，响应 %s", rec.Code, rec.Body.String())

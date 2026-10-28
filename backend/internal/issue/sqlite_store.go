@@ -83,14 +83,23 @@ func (s *SQLiteStore) probeWithFreshConnection(ctx context.Context) error {
 	return nil
 }
 
-// List 查询全部问题，按 created_at 从新到旧、同时间按 id 排序。
-func (s *SQLiteStore) List(ctx context.Context) ([]Issue, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, title, description, priority, status,
-		       position_x, position_y, position_z, created_at, updated_at
-		FROM issues
-		ORDER BY created_at DESC, id
-	`)
+// List 查询问题，按 created_at 从新到旧、同时间按 id 排序。
+// ownerID 非空时经 issue_owners 关联只返回该账号创建的问题；旧数据无归属记录，
+// 仅在 ownerID 为空（管理员）时可见。
+func (s *SQLiteStore) List(ctx context.Context, ownerID string) ([]Issue, error) {
+	query := `
+		SELECT i.id, i.title, i.description, i.priority, i.status,
+		       i.position_x, i.position_y, i.position_z, i.created_at, i.updated_at
+		FROM issues i
+	`
+	args := make([]any, 0, 1)
+	if ownerID != "" {
+		query += `JOIN issue_owners o ON o.issue_id = i.id WHERE o.user_id = ? `
+		args = append(args, ownerID)
+	}
+	query += `ORDER BY i.created_at DESC, i.id`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查询问题列表失败: %w", err)
 	}
@@ -114,9 +123,9 @@ func (s *SQLiteStore) List(ctx context.Context) ([]Issue, error) {
 	return issues, nil
 }
 
-// Create 在事务中写入新问题，提交成功后读取并返回完整记录；
-// 插入或提交失败时事务整体回滚，不返回成功。
-func (s *SQLiteStore) Create(ctx context.Context, it Issue) (Issue, error) {
+// Create 在事务中写入新问题，ownerID 非空时同时写入归属关联，
+// 提交成功后读取并返回完整记录；插入或提交失败时事务整体回滚，不返回成功。
+func (s *SQLiteStore) Create(ctx context.Context, it Issue, ownerID string) (Issue, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Issue{}, fmt.Errorf("开启事务失败: %w", err)
@@ -131,6 +140,13 @@ func (s *SQLiteStore) Create(ctx context.Context, it Issue) (Issue, error) {
 		it.Position.X, it.Position.Y, it.Position.Z, it.CreatedAt, it.UpdatedAt)
 	if err != nil {
 		return Issue{}, fmt.Errorf("写入问题失败: %w", err)
+	}
+	if ownerID != "" {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO issue_owners (issue_id, user_id, created_at) VALUES (?, ?, ?)
+		`, it.ID, ownerID, it.CreatedAt); err != nil {
+			return Issue{}, fmt.Errorf("写入问题归属失败: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Issue{}, fmt.Errorf("提交事务失败: %w", err)

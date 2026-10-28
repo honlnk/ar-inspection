@@ -1,0 +1,8 @@
+# 计划 006 4.3：不把本机环境、数据与密钥带进构建上下文
+.env
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.git

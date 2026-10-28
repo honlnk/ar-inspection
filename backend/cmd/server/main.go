@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ar-inspection/backend/internal/auth"
 	"ar-inspection/backend/internal/httpapi"
 	"ar-inspection/backend/internal/issue"
 )
@@ -29,6 +30,18 @@ func run() error {
 	dbPath := envOr("ISSUE_DB_PATH", "./data/inspection.db")
 	corsOrigins := envOr("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 
+	// 计划 006：演示账号密码与会话密钥只从环境注入；缺失或过短直接失败，
+	// 不为开发环境设置可猜测的默认值，也不为本地演示关闭鉴权。
+	inspectorPassword := os.Getenv("INSPECTOR_PASSWORD")
+	adminPassword := os.Getenv("ADMIN_PASSWORD")
+	sessionSecret := os.Getenv("SESSION_SECRET")
+	if strings.TrimSpace(inspectorPassword) == "" || strings.TrimSpace(adminPassword) == "" {
+		return errors.New("缺少演示账号密码环境变量：请设置 INSPECTOR_PASSWORD 与 ADMIN_PASSWORD（参见 backend/.env.example）")
+	}
+	if len(strings.TrimSpace(sessionSecret)) < 32 {
+		return errors.New("缺少或过短的会话密钥：请设置 SESSION_SECRET（至少 32 个字符的随机值，参见 backend/.env.example）")
+	}
+
 	store, err := issue.OpenSQLite(dbPath)
 	if err != nil {
 		return err
@@ -42,8 +55,23 @@ func run() error {
 		return err
 	}
 
+	// 账号/会话存储与问题库同文件；建表依赖 issues 表，须在问题库初始化之后。
+	authStore, err := auth.OpenSQLite(dbPath)
+	if err != nil {
+		return err
+	}
+	defer authStore.Close()
+	if err := authStore.Init(initCtx); err != nil {
+		return err
+	}
+	authService := auth.NewService(authStore, []byte(sessionSecret))
+	if err := authService.EnsureAccounts(initCtx, inspectorPassword, adminPassword); err != nil {
+		return err
+	}
+	authService.CleanupExpiredSessions(context.Background())
+
 	gin.SetMode(gin.ReleaseMode)
-	router := httpapi.NewRouter(store, splitOrigins(corsOrigins), issue.DefaultFieldGenerator())
+	router := httpapi.NewRouter(store, authService, splitOrigins(corsOrigins), issue.DefaultFieldGenerator())
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           router,

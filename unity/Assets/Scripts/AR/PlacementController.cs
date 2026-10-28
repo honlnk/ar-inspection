@@ -14,6 +14,8 @@ namespace Inspection.AR
     /// 计划 006 起：放置/表单切换优先级时按共享材质三色着色（低=绿/中=橙/高=红），
     /// 登录与历史面板打开期间冻结放置。
     /// </summary>
+    // 晚于 EventSystem 执行：Began 帧的 IsPointerOverGameObject 才能读到本帧 UI 命中
+    [DefaultExecutionOrder(100)]
     public class PlacementController : MonoBehaviour
     {
         [SerializeField] private IssueFormController formController;
@@ -38,9 +40,24 @@ namespace Inspection.AR
 
         /// <summary>
         /// 放置距离上限（米）：真机实测 ARCore 跟踪漂移会产生映射到数米外的伪平面，
-        /// 点击可见桌面却命中远处平面（标记 8m 外不可见）。超过该距离的命中一律拒绝并提示重置会话。
+        /// 点击可见桌面却命中远处平面（标记 8m 外不可见）。超过该距离的命中拒绝放置；
+        /// 2～6 米按普通超距提示靠近，达到 6 米或位于相机后方才视为跟踪异常并建议重置。
         /// </summary>
         public const float MaxPlacementDistanceMeters = 2f;
+
+        /// <summary>
+        /// 达到该距离的命中默认是伪平面/跟踪漂移，提示重置；介于上限与该值之间只提示靠近重试。
+        /// 真机实测伪平面案例为 8.13 米，故取上限的 3 倍（6 米）作为异常分界。
+        /// </summary>
+        public const float ResetSuggestionDistanceMeters = 6f;
+
+        /// <summary>放置拒绝原因：避免把正常超距误报成跟踪故障。</summary>
+        public enum PlacementRejection
+        {
+            None,
+            TooFar,
+            TrackingAnomaly,
+        }
 
         private ARRaycastManager raycastManager;
         private ARAnchorManager anchorManager;
@@ -129,6 +146,13 @@ namespace Inspection.AR
                         LastTapInfo = "非tap（超时或拖动）";
                         break;
                     }
+                    // Ended 帧再查一次 UI：Began 帧脚本顺序靠前时可能读到上一帧的命中状态，
+                    // 会让「点上报按钮」同时被当成平面点击（真机竞态）
+                    if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject(touch.fingerId))
+                    {
+                        LastTapInfo = "点击在UI上，不放置";
+                        break;
+                    }
                     TryPlaceAt(touch.position);
                     break;
             }
@@ -159,6 +183,39 @@ namespace Inspection.AR
             return Vector3.Dot(cameraForward, hitPosition - cameraPosition) >= MinForwardDistanceMeters;
         }
 
+        /// <summary>
+        /// 放置拒绝原因判定（供 EditMode 测试）：相机后方或 6 米外视为跟踪异常，
+        /// 2～6 米只是普通超距；两者文案不同，避免让正常靠近重试的用户去重置地图。
+        /// </summary>
+        public static PlacementRejection EvaluatePlacement(float distanceMeters, bool inFront)
+        {
+            if (!inFront)
+            {
+                return PlacementRejection.TrackingAnomaly;
+            }
+            if (IsPlacementDistanceValid(distanceMeters))
+            {
+                return PlacementRejection.None;
+            }
+            return distanceMeters >= ResetSuggestionDistanceMeters
+                ? PlacementRejection.TrackingAnomaly
+                : PlacementRejection.TooFar;
+        }
+
+        /// <summary>拒绝提示文案（供 EditMode 测试）：普通超距给出距离与靠近建议，异常才提重置。</summary>
+        public static string PlacementRejectionMessage(PlacementRejection rejection, float distanceMeters)
+        {
+            switch (rejection)
+            {
+                case PlacementRejection.TooFar:
+                    return $"距离约 {distanceMeters:F1} 米，请靠近到 {MaxPlacementDistanceMeters:F0} 米内再点击";
+                case PlacementRejection.TrackingAnomaly:
+                    return "平面跟踪异常，请点顶部「重置」后重新扫描";
+                default:
+                    return string.Empty;
+            }
+        }
+
         private bool AnyPanelOpen()
         {
             return (formController != null && formController.IsOpen)
@@ -181,19 +238,23 @@ namespace Inspection.AR
             }
 
             var hit = Hits[0];
-            // 命中点距相机过远 → 命中的是跟踪漂移产生的伪平面（真机实测案例：8m 外），
-            // 拒绝放置并引导重置，避免"已放置标记"但方块在数米外不可见的困惑状态
+            // 命中点距相机过远 → 可能是跟踪漂移产生的伪平面（真机实测案例：8m 外），
+            // 拒绝放置；普通超距让用户靠近重试，只有数米外/相机后方才提示重置，
+            // 避免"已放置标记"但方块在数米外不可见，也避免正常超距被误报成故障
             var cam = Camera.main;
             if (cam != null)
             {
                 var hitDistance = Vector3.Distance(cam.transform.position, hit.pose.position);
-                if (!IsPlacementDistanceValid(hitDistance)
-                    || !IsPlacementInFront(cam.transform.position, cam.transform.forward, hit.pose.position))
+                var inFront = IsPlacementInFront(cam.transform.position, cam.transform.forward, hit.pose.position);
+                var rejection = EvaluatePlacement(hitDistance, inFront);
+                if (rejection != PlacementRejection.None)
                 {
-                    LastTapInfo = $"命中异常平面({hitDistance:F1}m)，已拒绝";
+                    LastTapInfo = rejection == PlacementRejection.TooFar
+                        ? $"超出放置距离({hitDistance:F1}m)，已拒绝"
+                        : $"平面命中异常({hitDistance:F1}m)，已拒绝";
                     if (toast != null)
                     {
-                        toast.Show("平面数据异常：请点顶部「重置」后重新扫描", 4f);
+                        toast.Show(PlacementRejectionMessage(rejection, hitDistance), 4f);
                     }
                     return;
                 }

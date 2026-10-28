@@ -148,8 +148,9 @@ namespace Inspection.UI
             SetText(item, "StatusText", HistoryApiClient.StatusLabel(issue.status));
             SetText(item, "DescText", string.IsNullOrEmpty(issue.description) ? "（无描述）" : issue.description);
             SetText(item, "PositionText", HistoryApiClient.FormatPosition(issue.position));
+            // 时间拆两行：1080 宽下同一行放不下创建与更新两个完整北京时间，单行会被截断
             SetText(item, "TimeText",
-                $"创建 {HistoryApiClient.FormatBeijingTime(issue.createdAt)} · 更新 {HistoryApiClient.FormatBeijingTime(issue.updatedAt)}");
+                $"创建 {HistoryApiClient.FormatBeijingTime(issue.createdAt)}\n更新 {HistoryApiClient.FormatBeijingTime(issue.updatedAt)}");
         }
 
         private static void SetText(Transform item, string childName, string value)

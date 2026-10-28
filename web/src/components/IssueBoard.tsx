@@ -16,8 +16,10 @@ import {
 } from '../lib/realtime'
 import { IssueList } from './IssueList'
 import { IssueFilters } from './IssueFilters'
+import { IssueSummary } from './IssueSummary'
 import { applyIssueFilters, EMPTY_FILTERS, type IssueFilterValues } from '../lib/filters'
 import { Feedback } from './Feedback'
+import { PRIMARY_BUTTON } from '../lib/styles'
 
 /** 首次加载结果状态；刷新不改变它，刷新进度与失败单独表达 */
 type LoadState = 'loading' | 'success' | 'error'
@@ -272,6 +274,16 @@ export function IssueBoard({ onSessionExpired, hidden, onRealtimeChange, createR
   const visibleIssues = useMemo(() => applyIssueFilters(issues, filters), [issues, filters])
   const emptyText =
     issues.length === 0 ? '暂无问题' : '没有符合当前条件的问题'
+  const hasActiveFilters =
+    filters.text.trim() !== '' || filters.priority !== 'all' || filters.status !== 'all'
+  const emptyAction =
+    loadState !== 'success'
+      ? undefined
+      : issues.length === 0
+        ? { label: '重新加载', onClick: handleRefresh }
+        : hasActiveFilters
+          ? { label: '清空筛选', onClick: () => setFilters({ ...EMPTY_FILTERS }) }
+          : undefined
 
   const listBusy = loadState === 'loading' || refreshing
   const anyBusy = listBusy || saving !== null
@@ -319,13 +331,7 @@ export function IssueBoard({ onSessionExpired, hidden, onRealtimeChange, createR
       <div className="hidden" aria-hidden="true">
         {/* 隐藏时保留全部状态（列表/草稿/筛选/实时连接），不卸载组件 */}
         <div className="space-y-4">
-          <IssueFilters
-            values={filters}
-            visibleCount={issues.length}
-            totalCount={issues.length}
-            disabled
-            onChange={setFilters}
-          />
+          <IssueFilters values={filters} disabled onChange={setFilters} />
           <IssueList
             issues={visibleIssues}
             drafts={drafts}
@@ -334,6 +340,8 @@ export function IssueBoard({ onSessionExpired, hidden, onRealtimeChange, createR
             savingId={null}
             remoteUpdatedIds={remoteUpdatedIds}
             emptyText={emptyText}
+            visibleCount={issues.length}
+            totalCount={issues.length}
             onDraftChange={handleDraftChange}
             onSave={issue => void handleSave(issue)}
           />
@@ -344,28 +352,19 @@ export function IssueBoard({ onSessionExpired, hidden, onRealtimeChange, createR
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">问题列表</h1>
-          <p className="mt-1 text-sm text-slate-500">查看巡检人员上报的问题并更新处理状态</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-xl leading-7 font-semibold text-slate-900">巡检问题</h1>
+          <p className="mt-1 text-sm text-slate-500">查看巡检人员上报的问题，并更新处理状态</p>
         </div>
-        <button
-          type="button"
-          disabled={anyBusy}
-          onClick={handleRefresh}
-          className="rounded-md bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <button type="button" disabled={anyBusy} onClick={handleRefresh} className={PRIMARY_BUTTON}>
           {refreshing ? '刷新中…' : '刷新'}
         </button>
       </div>
+
+      <IssueSummary issues={issues} ready={loadState === 'success'} />
       {renderFeedback()}
-      <IssueFilters
-        values={filters}
-        visibleCount={loadState === 'success' ? visibleIssues.length : 0}
-        totalCount={loadState === 'success' ? issues.length : 0}
-        disabled={loadState !== 'success'}
-        onChange={setFilters}
-      />
+      <IssueFilters values={filters} disabled={loadState !== 'success'} onChange={setFilters} />
       <IssueList
         issues={visibleIssues}
         drafts={drafts}
@@ -374,6 +373,9 @@ export function IssueBoard({ onSessionExpired, hidden, onRealtimeChange, createR
         savingId={saving?.id ?? null}
         remoteUpdatedIds={remoteUpdatedIds}
         emptyText={emptyText}
+        visibleCount={loadState === 'success' ? visibleIssues.length : 0}
+        totalCount={loadState === 'success' ? issues.length : 0}
+        emptyAction={emptyAction}
         onDraftChange={handleDraftChange}
         onSave={issue => void handleSave(issue)}
       />

@@ -28,6 +28,18 @@ describe('徽标类名', () => {
     expect(statusBadgeClasses('resolved')).toContain('bg-emerald-50')
   })
 
+  it('优先级语义与计划一致：低=绿、中=橙、高=红', () => {
+    expect(priorityBadgeClasses('low')).toContain('bg-emerald-50')
+    expect(priorityBadgeClasses('medium')).toContain('bg-amber-50')
+    expect(priorityBadgeClasses('high')).toContain('bg-red-50')
+  })
+
+  it('状态语义与计划一致：待处理=橙、处理中=蓝、已解决=绿', () => {
+    expect(statusBadgeClasses('open')).toContain('bg-orange-50')
+    expect(statusBadgeClasses('in_progress')).toContain('bg-blue-50')
+    expect(statusBadgeClasses('resolved')).toContain('bg-emerald-50')
+  })
+
   it('未知枚举回退到中性类名', () => {
     expect(priorityBadgeClasses('urgent')).toBe('bg-slate-100 text-slate-500')
     expect(statusBadgeClasses('done')).toBe('bg-slate-100 text-slate-500')

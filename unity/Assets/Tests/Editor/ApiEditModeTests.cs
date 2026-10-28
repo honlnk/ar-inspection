@@ -190,6 +190,58 @@ public class ApiEditModeTests
         Assert.IsFalse(PlacementController.IsPlacementInFront(camPos, forward, Vector3.zero)); // 与相机重合
     }
 
+    [Test]
+    public void PlacementRejection_NearAndBoundary_None()
+    {
+        Assert.AreEqual(PlacementController.PlacementRejection.None,
+            PlacementController.EvaluatePlacement(0.5f, true));
+        Assert.AreEqual(PlacementController.PlacementRejection.None,
+            PlacementController.EvaluatePlacement(PlacementController.MaxPlacementDistanceMeters, true));
+    }
+
+    [Test]
+    public void PlacementRejection_NormalOverDistance_TooFar()
+    {
+        // 2～6 米是正常超距：提示靠近重试，不改提示重置
+        Assert.AreEqual(PlacementController.PlacementRejection.TooFar,
+            PlacementController.EvaluatePlacement(PlacementController.MaxPlacementDistanceMeters + 0.01f, true));
+        Assert.AreEqual(PlacementController.PlacementRejection.TooFar,
+            PlacementController.EvaluatePlacement(PlacementController.ResetSuggestionDistanceMeters - 0.01f, true));
+    }
+
+    [Test]
+    public void PlacementRejection_FarOrBehind_TrackingAnomaly()
+    {
+        // 边界及真机 8.13m 伪平面按跟踪异常处理
+        Assert.AreEqual(PlacementController.PlacementRejection.TrackingAnomaly,
+            PlacementController.EvaluatePlacement(PlacementController.ResetSuggestionDistanceMeters, true));
+        Assert.AreEqual(PlacementController.PlacementRejection.TrackingAnomaly,
+            PlacementController.EvaluatePlacement(8.13f, true));
+        // 距离只有 1.58m 但落在相机后方，同样按异常处理
+        Assert.AreEqual(PlacementController.PlacementRejection.TrackingAnomaly,
+            PlacementController.EvaluatePlacement(1.58f, false));
+    }
+
+    [Test]
+    public void PlacementRejectionMessage_TooFar_AsksToApproachWithoutReset()
+    {
+        var message = PlacementController.PlacementRejectionMessage(
+            PlacementController.PlacementRejection.TooFar, 3.2f);
+        StringAssert.Contains("3.2 米", message);
+        StringAssert.Contains("2 米", message);
+        StringAssert.Contains("靠近", message);
+        StringAssert.DoesNotContain("重置", message);
+    }
+
+    [Test]
+    public void PlacementRejectionMessage_Anomaly_SuggestsReset()
+    {
+        var message = PlacementController.PlacementRejectionMessage(
+            PlacementController.PlacementRejection.TrackingAnomaly, 8.13f);
+        StringAssert.Contains("跟踪异常", message);
+        StringAssert.Contains("重置", message);
+    }
+
     // ---------- 跟随按钮屏幕投影 ----------
 
     private Camera testCamera;

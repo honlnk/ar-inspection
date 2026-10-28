@@ -90,23 +90,16 @@ export default function App() {
 
   if (phase === 'checking') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100">
-        <p className="text-sm text-slate-500">正在检查登录状态…</p>
+      <div className="flex min-h-screen items-center justify-center bg-canvas">
+        <p className="text-sm text-slate-500" role="status">
+          正在检查登录状态…
+        </p>
       </div>
     )
   }
 
   if (phase === 'login' || user === null) {
-    return (
-      <>
-        {roleNotice && (
-          <div className="flex justify-center bg-amber-50 px-4 py-2" role="alert">
-            <p className="text-sm text-amber-700">{roleNotice}</p>
-          </div>
-        )}
-        <LoginPage onLoggedIn={handleLoggedIn} />
-      </>
-    )
+    return <LoginPage onLoggedIn={handleLoggedIn} notice={roleNotice} />
   }
 
   return (

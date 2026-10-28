@@ -215,7 +215,8 @@ namespace Inspection.EditorTools
             // 层级通过末尾统一排序控制（自下而上）：表单 → 跟随按钮 → 顶部栏 → 调试条 →
             // 历史面板 → 登录面板 → 设置面板（可在登录界面之上配置后端地址）→ Toast
             var toast = BuildToast(appUi.transform, font);
-            var formController = BuildFormPanel(appUi.transform, font, out var titleInput, out var prioritySelector);
+            var formController = BuildFormPanel(appUi.transform, font, out var titleInput,
+                out var descriptionInput, out var prioritySelector);
             var reportButton = BuildReportButton(appUi.transform, font);
             var settingsController = BuildSettingsPanel(appUi.transform, font);
             var loginController = BuildLoginPanel(appUi.transform, font, settingsController);
@@ -231,6 +232,10 @@ namespace Inspection.EditorTools
             UnityEventTools.AddVoidPersistentListener(
                 ((Component)reportButton).GetComponentInChildren<Button>().onClick, reportButton.OnReportButtonClicked);
             UnityEventTools.AddVoidPersistentListener(titleInput.onValueChanged, formController.OnTitleChanged);
+            // 系统返回收起软键盘会把输入回滚（uGUI wasCanceled）：缓存已输入内容并在结束编辑时恢复
+            UnityEventTools.AddStringPersistentListener(titleInput.onEndEdit, formController.OnTitleEndEdit, string.Empty);
+            UnityEventTools.AddVoidPersistentListener(descriptionInput.onValueChanged, formController.OnDescriptionChanged);
+            UnityEventTools.AddStringPersistentListener(descriptionInput.onEndEdit, formController.OnDescriptionEndEdit, string.Empty);
             // 优先级分段按钮变化时只替换草稿材质（几何/锚点/坐标仍由 PlacementController 管理）。
             UnityEventTools.AddIntPersistentListener(prioritySelector.onValueChanged, formController.OnPriorityChanged, 0);
             BuildFieldGuide(appUi.transform, font);
@@ -272,6 +277,15 @@ namespace Inspection.EditorTools
             SetRef(placement, "priorityMaterials", markerMaterials);
             SetRef(formController, "placement", placement);
 
+            // 系统返回统一分发（计划 007 4.5）：软键盘 → 设置 → 登录 → 历史 → 表单 → AR 主界面
+            var backHandler = appUi.AddComponent<Inspection.UI.AndroidBackHandler>();
+            SetRef(backHandler, "loginPanel", loginController);
+            SetRef(backHandler, "settingsPanel", settingsController);
+            SetRef(backHandler, "historyPanel", historyController);
+            SetRef(backHandler, "formPanel", formController);
+            SetRef(backHandler, "placement", placement);
+            SetRef(backHandler, "toast", toast);
+
             // 调试条接线：标记与按钮诊断信息来源
             SetRef(overlay, "placement", placement);
             SetRef(overlay, "reportButton", reportButton);
@@ -286,12 +300,12 @@ namespace Inspection.EditorTools
             }
             UnityEventTools.AddVoidPersistentListener(logoutButton.onClick, settingsController.OnLogoutClicked);
 
-            // 最终渲染层级（index 0 在最底层）：全屏面板必须盖住顶部栏与跟随按钮，
-            // 设置面板盖住登录面板（登录前也能配置后端地址），Toast 永远最上
+            // 最终渲染层级（index 0 在最底层）：表单必须盖住顶部栏、引导与跟随按钮，
+            // 历史/登录/设置依次盖住表单（设置可在登录前配置后端地址），Toast 永远最上
             var siblingOrder = new[]
             {
-                "FormPanelRoot", "ReportButtonRoot", "TopBar", "FieldGuideRoot", "DevDebugOverlay",
-                "HistoryPanelRoot", "LoginPanelRoot", "SettingsPanelRoot", "ToastRoot",
+                "ReportButtonRoot", "TopBar", "FieldGuideRoot", "DevDebugOverlay",
+                "FormPanelRoot", "HistoryPanelRoot", "LoginPanelRoot", "SettingsPanelRoot", "ToastRoot",
             };
             for (var i = 0; i < siblingOrder.Length; i++)
             {
@@ -341,7 +355,8 @@ namespace Inspection.EditorTools
             var root = UnityWorkspaceUi.Full(parent, "FieldGuideRoot", Color.clear, safeArea: true, out var content);
             var guide = UnityWorkspaceUi.Rect(content, "Guide", Vector2.zero, Vector2.zero);
             UnityWorkspaceUi.Bottom(guide, 44f, 108f);
-            UnityWorkspaceUi.Surface(guide, UiVisualStyle.TopBar);
+            var guideImage = UnityWorkspaceUi.Surface(guide, UiVisualStyle.TopBar);
+            UnityWorkspaceUi.Round(guideImage, UiVisualStyle.ControlRadius);
             var text = UnityWorkspaceUi.Text(guide, "Message", "移动手机扫描，点击蓝色平面放置标记",
                 42, Color.white, TextAnchor.MiddleCenter);
             UnityWorkspaceUi.StretchPad(text.rectTransform, 16f, 4f);
@@ -355,7 +370,8 @@ namespace Inspection.EditorTools
             card.anchorMin = card.anchorMax = card.pivot = new Vector2(0.5f, 1f);
             card.anchoredPosition = new Vector2(0f, -196f);
             card.sizeDelta = new Vector2(960f, 132f);
-            UnityWorkspaceUi.Surface(card, new Color(0.05f, 0.08f, 0.14f, 0.96f));
+            var toastImage = UnityWorkspaceUi.Surface(card, new Color(0.05f, 0.08f, 0.14f, 0.96f));
+            UnityWorkspaceUi.Round(toastImage, UiVisualStyle.CardRadius);
             var text = UnityWorkspaceUi.Text(card, "Message", string.Empty, 42, Color.white, TextAnchor.MiddleCenter);
             UnityWorkspaceUi.StretchPad(text.rectTransform, 24f, 8f);
             var toast = root.gameObject.AddComponent<Inspection.UI.ToastView>();
@@ -377,17 +393,22 @@ namespace Inspection.EditorTools
         }
 
         private static Inspection.UI.IssueFormController BuildFormPanel(Transform parent, Font font,
-            out InputField titleInput, out Inspection.UI.PrioritySelector prioritySelector)
+            out InputField titleInput, out InputField descriptionInput,
+            out Inspection.UI.PrioritySelector prioritySelector)
         {
             var root = UnityWorkspaceUi.Full(parent, "FormPanelRoot", Color.clear, safeArea: true, out var safeArea);
             UnityWorkspaceUi.Mask(safeArea);
+            // 底部卡片：横向拉满、纵向固定 1600 高并贴安全区底边。
+            // 不能用全屏拉伸锚点再加 sizeDelta.y=1600：卡片实际高度会变成
+            // 屏幕高度 + 1600，顶部对齐卡片顶的滚动内容整体排到屏幕外，表单只剩白底。
             var card = UnityWorkspaceUi.Rect(safeArea, "FormCard", Vector2.zero, Vector2.zero);
-            card.anchorMin = Vector2.zero;
-            card.anchorMax = Vector2.one;
+            card.anchorMin = new Vector2(0f, 0f);
+            card.anchorMax = new Vector2(1f, 0f);
             card.pivot = new Vector2(0.5f, 0f);
             card.offsetMin = Vector2.zero;
             card.offsetMax = new Vector2(0f, 1600f);
             UnityWorkspaceUi.Surface(card, UiVisualStyle.Surface);
+            UnityWorkspaceUi.Round(card.GetComponent<Image>(), UiVisualStyle.FormCardRadius);
             var scroll = UnityWorkspaceUi.Scroll(card, "KeyboardArea", out var content, keyboardInset: true);
             scroll.GetComponent<RectTransform>().offsetMin = Vector2.zero;
             scroll.GetComponent<RectTransform>().offsetMax = Vector2.zero;
@@ -401,7 +422,7 @@ namespace Inspection.EditorTools
             UnityWorkspaceUi.Label(content, "TitleLabel", "标题（必填）", 152f, 56f, UiVisualStyle.Secondary, 38);
             titleInput = UnityWorkspaceUi.Input(content, "TitleInput", "如：入口墙面破损", 220f, 128f, multiline: false);
             UnityWorkspaceUi.Label(content, "DescLabel", "描述（可选）", 384f, 56f, UiVisualStyle.Secondary, 38);
-            var descriptionInput = UnityWorkspaceUi.Input(content, "DescInput", "补充位置细节、影响范围等", 452f, 176f, multiline: true);
+            descriptionInput = UnityWorkspaceUi.Input(content, "DescInput", "补充位置细节、影响范围等", 452f, 176f, multiline: true);
             UnityWorkspaceUi.Label(content, "PriorityLabel", "优先级", 664f, 56f, UiVisualStyle.Secondary, 38);
             prioritySelector = BuildPrioritySelector(content, 736f);
             UnityWorkspaceUi.Label(content, "PositionLabel", "位置（自动带出，只读）", 928f, 56f, UiVisualStyle.Secondary, 38);
@@ -481,7 +502,8 @@ namespace Inspection.EditorTools
                 password: true);
             var noticeBackground = UnityWorkspaceUi.Rect(card, "NoticeBackground", Vector2.zero, Vector2.zero);
             UnityWorkspaceUi.Top(noticeBackground, 708f, 144f);
-            UnityWorkspaceUi.Surface(noticeBackground, UiVisualStyle.Tint(UiVisualStyle.Secondary), false);
+            var noticeImage = UnityWorkspaceUi.Surface(noticeBackground, UiVisualStyle.Tint(UiVisualStyle.Secondary), false);
+            UnityWorkspaceUi.Round(noticeImage, UiVisualStyle.ControlRadius);
             var notice = UnityWorkspaceUi.Text(noticeBackground, "NoticeText", "请登录巡检员账号", 38,
                 UiVisualStyle.Secondary, TextAnchor.MiddleCenter);
             UnityWorkspaceUi.StretchPad(notice.rectTransform, 16f, 4f);
@@ -583,32 +605,42 @@ namespace Inspection.EditorTools
 
         private static GameObject BuildHistoryItemTemplate(RectTransform content, Font font)
         {
+            // 行高按两行描述与两行时间预留，避免长文案被截断（计划 007 历史卡片）
+            const float itemHeight = 520f;
             var item = UnityWorkspaceUi.Rect(content, "HistoryItemTemplate", Vector2.zero, Vector2.zero);
-            item.sizeDelta = new Vector2(0f, 420f);
-            item.gameObject.AddComponent<LayoutElement>().preferredHeight = 420f;
-            UnityWorkspaceUi.Surface(item, UiVisualStyle.Surface);
+            item.sizeDelta = new Vector2(0f, itemHeight);
+            item.gameObject.AddComponent<LayoutElement>().preferredHeight = itemHeight;
+            var itemImage = UnityWorkspaceUi.Surface(item, UiVisualStyle.Surface);
+            UnityWorkspaceUi.Round(itemImage, UiVisualStyle.CardRadius);
             UnityWorkspaceUi.Label(item, "TitleText", "标题", 28f, 72f, UiVisualStyle.Ink, 48);
-            var priorityTag = UnityWorkspaceUi.Rect(item, "PriorityTag", Vector2.zero, Vector2.zero);
-            UnityWorkspaceUi.Top(priorityTag, 124f, 72f);
-            priorityTag.offsetMax = new Vector2(-420f, 0f);
-            UnityWorkspaceUi.Surface(priorityTag, UiVisualStyle.Tint(UiVisualStyle.Medium), false);
-            var priorityText = UnityWorkspaceUi.Text(priorityTag, "PriorityText", "优先级 中", 38,
-                UiVisualStyle.Medium);
-            UnityWorkspaceUi.StretchPad(priorityText.rectTransform, 16f, 0f);
-            priorityTag.gameObject.AddComponent<Inspection.UI.HistoryTagView>().Configure(priorityText, true);
-            var statusTag = UnityWorkspaceUi.Rect(item, "StatusTag", Vector2.zero, Vector2.zero);
-            UnityWorkspaceUi.Top(statusTag, 124f, 72f);
-            statusTag.offsetMin = new Vector2(432f, 0f);
-            UnityWorkspaceUi.Surface(statusTag, UiVisualStyle.Tint(UiVisualStyle.Open), false);
-            var statusText = UnityWorkspaceUi.Text(statusTag, "StatusText", "待处理", 38, UiVisualStyle.Open);
-            UnityWorkspaceUi.StretchPad(statusText.rectTransform, 16f, 0f);
-            statusTag.gameObject.AddComponent<Inspection.UI.HistoryTagView>().Configure(statusText, false);
-            UnityWorkspaceUi.Label(item, "DescText", "描述", 220f, 72f, UiVisualStyle.Secondary, 40);
-            UnityWorkspaceUi.Label(item, "PositionText", "x 0.000   y 0.000   z 0.000", 304f, 48f,
+            BuildHistoryTag(item, "PriorityTag", "PriorityText", "优先级 中", 48f, 124f, 300f,
+                UiVisualStyle.Medium, true);
+            BuildHistoryTag(item, "StatusTag", "StatusText", "待处理", 372f, 124f, 280f,
+                UiVisualStyle.Open, false);
+            UnityWorkspaceUi.Label(item, "DescText", "描述", 224f, 100f, UiVisualStyle.Secondary, 40);
+            UnityWorkspaceUi.Label(item, "PositionText", "x 0.000   y 0.000   z 0.000", 340f, 48f,
                 UiVisualStyle.Secondary, 36);
-            UnityWorkspaceUi.Label(item, "TimeText", "创建 · 更新", 360f, 48f, UiVisualStyle.Secondary, 36);
+            UnityWorkspaceUi.Label(item, "TimeText", "创建 · 更新", 404f, 88f, UiVisualStyle.Secondary, 34);
             item.gameObject.SetActive(false);
             return item.gameObject;
+        }
+
+        /// <summary>
+        /// 历史卡片标签：左上角固定宽度，先定锚点再定位置。不能先 Top() 再改 offset，
+        /// 否则纵向位置会被重置到卡片顶部（表现为标签压住标题、或高度为负不可见）。
+        /// </summary>
+        private static void BuildHistoryTag(RectTransform item, string name, string textName,
+            string initialText, float x, float y, float width, Color color, bool priority)
+        {
+            var tag = UnityWorkspaceUi.Rect(item, name, Vector2.zero, new Vector2(width, 72f));
+            tag.anchorMin = tag.anchorMax = new Vector2(0f, 1f);
+            tag.pivot = new Vector2(0f, 1f);
+            tag.anchoredPosition = new Vector2(x, -y);
+            var background = UnityWorkspaceUi.Surface(tag, UiVisualStyle.Tint(color), false);
+            UnityWorkspaceUi.Round(background, UiVisualStyle.TagRadius);
+            var label = UnityWorkspaceUi.Text(tag, textName, initialText, 38, color);
+            UnityWorkspaceUi.StretchPad(label.rectTransform, 16f, 0f);
+            tag.gameObject.AddComponent<Inspection.UI.HistoryTagView>().Configure(label, background, priority);
         }
 
         /// <summary>设置全屏页：后端地址、账号、诊断与 AR 会话四区；危险操作保留文字二次确认。</summary>
@@ -633,22 +665,24 @@ namespace Inspection.EditorTools
                 UiVisualStyle.Primary, Color.white, true);
             UnityWorkspaceUi.Top((RectTransform)save.transform, 384f, 128f);
 
-            var account = UnityWorkspaceUi.Section(content, "AccountSection", "账号", 708f, 240f);
-            UnityWorkspaceUi.Label(account, "Description", "巡检员账号仅保存在当前会话中，不保存密码。",
+            // 账号区：说明独占整行，退出按钮另起一行，避免覆盖文字（计划 007 真机排版缺陷）
+            var account = UnityWorkspaceUi.Section(content, "AccountSection", "账号", 708f, 380f);
+            UnityWorkspaceUi.Label(account, "Description", "账号仅保存在当前会话中，不保存密码。",
                 108f, 88f, UiVisualStyle.Secondary, 38);
-            var logout = UnityWorkspaceUi.Button(account, "LogoutButton", "退出登录", Vector2.zero, new Vector2(280f, 128f),
+            var logout = UnityWorkspaceUi.Button(account, "LogoutButton", "退出登录", Vector2.zero, new Vector2(320f, 128f),
                 UiVisualStyle.Surface, UiVisualStyle.Error);
             var logoutRect = (RectTransform)logout.transform;
-            logoutRect.anchorMin = logoutRect.anchorMax = new Vector2(1f, 0.5f);
-            logoutRect.anchoredPosition = new Vector2(-176f, -32f);
+            logoutRect.anchorMin = logoutRect.anchorMax = new Vector2(0f, 1f);
+            logoutRect.pivot = new Vector2(0f, 1f);
+            logoutRect.anchoredPosition = new Vector2(48f, -220f);
 
-            var diagnostics = UnityWorkspaceUi.Section(content, "DiagnosticsSection", "诊断", 980f, 448f);
+            var diagnostics = UnityWorkspaceUi.Section(content, "DiagnosticsSection", "诊断", 1120f, 448f);
             var toggle = UnityWorkspaceUi.Toggle(diagnostics, "FullDiagnosticsToggle", "完整诊断（仅排错时开启）", 108f, 136f);
             UnityWorkspaceUi.Label(diagnostics, "Hint",
                 "开启后显示屏幕调试信息，记录详细设备日志；放置诊断包含实景截图与坐标。默认关闭，重启保留设置。",
                 268f, 136f, UiVisualStyle.Secondary, 38);
 
-            var ar = UnityWorkspaceUi.Section(content, "ArSection", "AR 会话", 1460f, 364f);
+            var ar = UnityWorkspaceUi.Section(content, "ArSection", "AR 会话", 1600f, 364f);
             UnityWorkspaceUi.Label(ar, "Description", "跟踪或落点异常时重建地图；当前草稿会被清除，需二次确认。",
                 108f, 88f, UiVisualStyle.Secondary, 38);
             var reset = UnityWorkspaceUi.Button(ar, "ResetButton", "重置 AR 会话", Vector2.zero, Vector2.zero,
@@ -657,7 +691,7 @@ namespace Inspection.EditorTools
             var resetController = reset.gameObject.AddComponent<Inspection.UI.SessionResetButton>();
             resetController.Configure(reset.GetComponentInChildren<Text>());
             UnityWorkspaceUi.Click(reset, resetController.ConfirmOrReset);
-            UnityWorkspaceUi.ScrolledContent(content, 1900f);
+            UnityWorkspaceUi.ScrolledContent(content, 2020f);
 
             var controller = parent.gameObject.AddComponent<Inspection.UI.SettingsPanelController>();
             UnityWorkspaceUi.SetRef(controller, "panelRoot", root.gameObject);
@@ -677,11 +711,12 @@ namespace Inspection.EditorTools
             var rect = (RectTransform)go.transform;
             rect.SetParent(parent, false);
             rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0f, 1f);
-            rect.anchoredPosition = new Vector2(20f, -126f);
-            rect.sizeDelta = new Vector2(1040f, 128f);
+            // 顶部栏高 168：调试条从工具栏下方开始，避免黄字盖住后端地址与按钮（计划 007）
+            rect.anchoredPosition = new Vector2(20f, -200f);
+            rect.sizeDelta = new Vector2(1040f, 150f);
             var text = go.AddComponent<Text>();
             text.font = font;
-            text.fontSize = 24;
+            text.fontSize = 28;
             text.color = Color.yellow;
             text.alignment = TextAnchor.UpperLeft;
             text.horizontalOverflow = HorizontalWrapMode.Wrap;

@@ -1,10 +1,26 @@
 @import "tailwindcss";
 
-/* Tailwind v4 编译入口：除必要设计令牌外不编写任何组件 CSS 规则。 */
+/* Tailwind v4 编译入口：仅保留设计令牌（字体、色彩、圆角、阴影），不写组件 CSS 规则。
+   页面语义与 Unity 端保持一致：浅灰蓝中性底 + 白色内容面 + 深靛蓝主操作。 */
 @theme {
-  --color-brand-50: #eef4ff;
-  --color-brand-100: #d9e6ff;
-  --color-brand-500: #4d7cfe;
-  --color-brand-600: #3563e9;
-  --color-brand-700: #2a4fc0;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans SC", sans-serif;
+
+  /* 页面底：浅灰蓝中性色，不使用渐变或摄影图 */
+  --color-canvas: #f1f5f9;
+
+  /* 主操作：深靛蓝实色，白字对比充足 */
+  --color-brand-50: #eef2fa;
+  --color-brand-100: #dbe3f3;
+  --color-brand-200: #b9c8e6;
+  --color-brand-500: #3b5aa8;
+  --color-brand-600: #263b80;
+  --color-brand-700: #1d2e63;
+
+  --radius-card: 0.75rem;
+  --radius-control: 0.5rem;
+
+  /* 轻阴影只用于内容面板与弹层，不逐行叠加 */
+  --shadow-panel: 0 1px 2px rgb(15 23 42 / 0.05), 0 1px 3px rgb(15 23 42 / 0.08);
+  --shadow-raised: 0 10px 30px rgb(15 23 42 / 0.14);
 }

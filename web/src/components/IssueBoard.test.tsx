@@ -5,7 +5,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchIssues, updateIssueStatus } from '../api/issues'
+import { fetchIssues, updateIssueStatus, ApiError } from '../api/issues'
 import type { Issue } from '../types/issue'
 import { IssueBoard } from './IssueBoard'
 import type { RealtimeClient, RealtimeClientOptions } from '../lib/realtime'
@@ -46,7 +46,8 @@ function deferred<T>() {
 }
 
 function rowOf(title: string) {
-  const row = screen.getByText(title).closest('tr')
+  // 列表为响应式卡片表格：桌面与窄屏共用同一份 DOM，每行是 article 而不存在 tr
+  const row = screen.getByText(title).closest('article')
   if (row === null) throw new Error(`未找到标题为「${title}」的行`)
   return {
     row,
@@ -299,6 +300,60 @@ describe('并发与时序', () => {
   })
 })
 
+describe('会话过期', () => {
+  it('首次加载收到 401 时通知 App 回登录页，不把过期显示成普通网络错误', async () => {
+    const onSessionExpired = vi.fn()
+    fetchIssuesMock.mockRejectedValueOnce(new ApiError('authentication_required', '请先登录', 401))
+    renderBoard({ onSessionExpired })
+
+    await waitFor(() => expect(onSessionExpired).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText(/无法获取问题/)).not.toBeInTheDocument()
+  })
+
+  it('保存状态收到 401 时通知 App 回登录页并保留草稿', async () => {
+    const user = userEvent.setup()
+    const onSessionExpired = vi.fn()
+    fetchIssuesMock.mockResolvedValue([issue()])
+    updateIssueStatusMock.mockRejectedValueOnce(new ApiError('authentication_required', '请先登录', 401))
+    renderBoard({ onSessionExpired })
+    await screen.findByText('入口墙面破损')
+
+    const { select, saveButton } = rowOf('入口墙面破损')
+    await user.selectOptions(select, 'resolved')
+    await user.click(saveButton)
+
+    await waitFor(() => expect(onSessionExpired).toHaveBeenCalledTimes(1))
+    expect(select).toHaveValue('resolved')
+    expect(screen.queryByText(/状态保存失败/)).not.toBeInTheDocument()
+  })
+})
+
+describe('键盘可用性', () => {
+  it('Tab 可依次到达刷新、搜索、筛选与清空，Enter 可触发清空', async () => {
+    const user = userEvent.setup()
+    fetchIssuesMock.mockResolvedValue([issue()])
+    renderBoard()
+    await screen.findByText('入口墙面破损')
+    const search = screen.getByPlaceholderText('输入关键词')
+
+    await user.tab()
+    expect(screen.getByRole('button', { name: '刷新' })).toHaveFocus()
+    await user.tab()
+    expect(search).toHaveFocus()
+
+    await user.type(search, '墙面')
+    await user.tab()
+    await user.tab()
+    await user.tab()
+    const clear = screen.getByRole('button', { name: '清空筛选' })
+    expect(clear).toHaveFocus()
+    await user.keyboard('{Enter}')
+
+    expect(search).toHaveValue('')
+    expect(screen.getByText('显示 1 / 共 1 条')).toBeInTheDocument()
+  })
+})
+
 describe('实时事件合并（事件序）', () => {
   it('另一客户端创建问题后自动出现，无需手动刷新', async () => {
     fetchIssuesMock.mockResolvedValue([issue()])
@@ -379,6 +434,91 @@ describe('实时事件合并（事件序）', () => {
     fake.emitStatus('connected')
 
     await waitFor(() => expect(fetchIssuesMock.mock.calls.length).toBeGreaterThan(callsBefore))
+  })
+})
+
+describe('工作台摘要与行详情（计划 007）', () => {
+  it('摘要按全量列表计算：全部问题、待处理、处理进度（处理中 + 已解决）', async () => {
+    fetchIssuesMock.mockResolvedValue([
+      issue({ id: 'a', title: '入口墙面破损', status: 'open' }),
+      issue({ id: 'b', title: '消防通道堵塞', status: 'open', priority: 'medium' }),
+      issue({ id: 'c', title: '照明缺失', status: 'in_progress', priority: 'low' }),
+      issue({ id: 'd', title: '地面积水', status: 'resolved', priority: 'low' }),
+    ])
+    renderBoard()
+    await screen.findByText('入口墙面破损')
+
+    const summary = screen.getByLabelText('问题摘要')
+    const values = within(summary).getAllByRole('definition')
+    // 每项三项：数值、说明；数值依次为 全部 / 待处理 / 处理进度
+    expect(values[0]).toHaveTextContent('4')
+    expect(values[2]).toHaveTextContent('2')
+    expect(values[4]).toHaveTextContent('2')
+    expect(within(summary).getByText('处理中 1 · 已解决 1')).toBeInTheDocument()
+  })
+
+  it('摘要不受筛选影响，列表计数随筛选变化', async () => {
+    const user = userEvent.setup()
+    fetchIssuesMock.mockResolvedValue([
+      issue({ id: 'a', title: '入口墙面破损', status: 'open' }),
+      issue({ id: 'b', title: '消防通道堵塞', status: 'resolved', priority: 'low' }),
+    ])
+    renderBoard()
+    await screen.findByText('入口墙面破损')
+
+    await user.selectOptions(screen.getByRole('combobox', { name: '按状态筛选' }), 'resolved')
+
+    expect(screen.getByText('显示 1 / 共 2 条')).toBeInTheDocument()
+    const summary = screen.getByLabelText('问题摘要')
+    expect(within(summary).getAllByRole('definition')[0]).toHaveTextContent('2')
+  })
+
+  it('行内展开显示完整描述、坐标与创建时间，可再次收起', async () => {
+    const user = userEvent.setup()
+    const longDescription = '左侧墙体存在裂缝，靠近地面位置有渗水痕迹，建议尽快安排维修并复检'
+    fetchIssuesMock.mockResolvedValue([issue({ description: longDescription })])
+    renderBoard()
+    await screen.findByText('入口墙面破损')
+
+    expect(screen.queryByText(/坐标：/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /展开问题「入口墙面破损」详情/ }))
+
+    expect(screen.getByText('坐标：').parentElement).toHaveTextContent('x 0.42 · y 0.03 · z 1.26')
+    expect(screen.getByText('完整描述：').parentElement).toHaveTextContent(longDescription)
+    expect(screen.getByText('创建时间：').parentElement).toHaveTextContent('2026/10/27 10:00:00')
+
+    await user.click(screen.getByRole('button', { name: /收起问题「入口墙面破损」详情/ }))
+    expect(screen.queryByText(/坐标：/)).not.toBeInTheDocument()
+  })
+
+  it('选择新状态后该行标记“未保存 → 目标状态”，保存成功后清除', async () => {
+    const user = userEvent.setup()
+    fetchIssuesMock.mockResolvedValue([issue()])
+    updateIssueStatusMock.mockResolvedValue(issue({ status: 'in_progress' }))
+    renderBoard()
+    await screen.findByText('入口墙面破损')
+
+    const { select, saveButton } = rowOf('入口墙面破损')
+    await user.selectOptions(select, 'in_progress')
+
+    expect(screen.getByText('未保存 → 处理中')).toBeInTheDocument()
+    await user.click(saveButton)
+
+    await waitFor(() => expect(screen.queryByText('未保存 → 处理中')).not.toBeInTheDocument())
+  })
+
+  it('首次加载显示结构稳定的静态骨架与状态说明', async () => {
+    const pending = deferred<Issue[]>()
+    fetchIssuesMock.mockReturnValueOnce(pending.promise)
+    renderBoard()
+
+    expect(screen.getByText('正在从后端加载问题…')).toBeInTheDocument()
+    expect(screen.getByText('正在加载问题列表')).toBeInTheDocument()
+    expect(screen.getByText('显示 — 条')).toBeInTheDocument()
+
+    pending.resolve([issue()])
+    expect(await screen.findByText('入口墙面破损')).toBeInTheDocument()
+    expect(screen.queryByText('正在加载问题列表')).not.toBeInTheDocument()
   })
 })
 

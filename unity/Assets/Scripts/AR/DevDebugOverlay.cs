@@ -30,15 +30,17 @@ namespace Inspection.AR
             // 业务反馈（Toast/警告/错误）不受影响
             if (!DiagnosticsConfig.FullEnabled)
             {
-                if (text != null && text.gameObject.activeSelf)
+                // 调试文本与本组件同属一个 GameObject：只能关 Text 组件，
+                // 关 GameObject 会把 Update 一起停掉，本次会话再开启开关也恢复不了
+                if (text != null && text.enabled)
                 {
-                    text.gameObject.SetActive(false);
+                    text.enabled = false;
                 }
                 return;
             }
-            if (text != null && !text.gameObject.activeSelf)
+            if (text != null && !text.enabled)
             {
-                text.gameObject.SetActive(true);
+                text.enabled = true;
             }
 
             if (Time.unscaledTime < nextUpdate)
@@ -124,10 +126,11 @@ namespace Inspection.AR
 #else
         private void Awake()
         {
-            // 正式构建：隐藏调试文本（组件随场景存在但不产生任何开销）
+            // 正式构建：隐藏调试文本（组件随场景存在但不产生任何开销）；
+            // 同 GameObject 上还有本组件，只能关 Text 不能关 GameObject
             if (text != null)
             {
-                text.gameObject.SetActive(false);
+                text.enabled = false;
             }
         }
 #endif

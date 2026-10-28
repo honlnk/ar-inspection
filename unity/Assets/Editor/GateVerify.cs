@@ -62,6 +62,18 @@ namespace Inspection.EditorTools
             }
         }
 
+        /// <summary>圆角由运行时组件生成，场景里检查组件与序列化半径即可防止搭建时漏掉。</summary>
+        private static bool HasRounded(Transform target, float minRadius)
+        {
+            var rounded = target != null ? target.GetComponent<Inspection.UI.RoundedImage>() : null;
+            if (rounded == null)
+            {
+                return false;
+            }
+            var property = new SerializedObject(rounded).FindProperty("radius");
+            return property != null && property.floatValue >= minRadius;
+        }
+
         /// <summary>
         /// 全屏面板的 panelRoot 必须指向 Full() 的根节点，而不是 SafeAreaContent：
         /// 面板关闭走 panelRoot.SetActive(false)，指到内容层时外层容器不会关闭，
@@ -173,6 +185,8 @@ namespace Inspection.EditorTools
                 "Android 入口为 Activity（UnityPlayerActivity，与自定义 Main Manifest 一致；GameActivity 入口会使启动器被禁用）");
             Check(PlayerSettings.defaultInterfaceOrientation == UIOrientation.Portrait,
                 "屏幕方向锁定竖屏 Portrait（计划 004 4.1）");
+            Check(!PlayerSettings.Android.predictiveBackSupport,
+                "预测性返回已关闭（系统返回统一走 Unity Escape 事件，计划 007 4.5）");
         }
 
         /// <summary>计划 004 新增：运行时脚本挂载、Prefab 引用与 UI 骨架（打开场景后检查）。</summary>
@@ -234,6 +248,21 @@ namespace Inspection.EditorTools
                     Check(formRoot != null && formRoot.Find("SafeAreaContent/Mask") != null
                         && formRoot.Find("SafeAreaContent/FormCard") != null,
                         "表单面板含全屏蒙层与底部卡片");
+                    // 计划 007 真机白屏回归：卡片必须贴底且高度固定，
+                    // 全屏拉伸锚点 + sizeDelta 会把表单内容整体推到屏幕上方。
+                    var formCard = formRoot?.Find("SafeAreaContent/FormCard") as RectTransform;
+                    var formCardPlaced = formCard != null
+                        && Mathf.Approximately(formCard.anchorMin.x, 0f)
+                        && Mathf.Approximately(formCard.anchorMin.y, 0f)
+                        && Mathf.Approximately(formCard.anchorMax.x, 1f)
+                        && Mathf.Approximately(formCard.anchorMax.y, 0f)
+                        && Mathf.Approximately(formCard.offsetMin.y, 0f)
+                        && Mathf.Approximately(formCard.offsetMax.y, 1600f);
+                    Check(formCardPlaced, "表单卡片贴底且高度固定 1600（锚点非全屏拉伸，内容不会排到屏幕外）");
+                    Check(HasRounded(formCard, 20f)
+                        && HasRounded(appUi.Find("LoginPanelRoot/SafeAreaContent/LoginScroll/Viewport/Content/LoginCard"), 20f)
+                        && HasRounded(appUi.Find("SettingsPanelRoot/SafeAreaContent/SettingsCard/Viewport/Content/BackendSection"), 20f),
+                        "表单/登录/设置卡片启用运行时圆角（计划 007 大圆角卡片）");
                     var settingsRoot = appUi.Find("SettingsPanelRoot");
                     Check(settingsRoot != null && settingsRoot.Find("SafeAreaContent/SettingsCard/Viewport/Content/ArSection/ResetButton") != null,
                         "设置面板为全屏滚动页且 AR 重置入口位于 AR 会话区");
@@ -250,9 +279,50 @@ namespace Inspection.EditorTools
                         && historyRoot.Find("SafeAreaContent/ScrollView/Viewport/Content/HistoryItemTemplate/StatusTag/StatusText") != null,
                         "历史面板存在且含头部与条目模板");
 
-                    // 层级顺序：设置在登录之上（登录前可配置后端），Toast 最上
-                    var order = new[] { "FormPanelRoot", "ReportButtonRoot", "TopBar", "FieldGuideRoot", "DevDebugOverlay",
-                        "HistoryPanelRoot", "LoginPanelRoot", "SettingsPanelRoot", "ToastRoot" };
+                    // 计划 007 真机缺陷回归：标签必须位于标题下方且互不重叠，时间行留足两行高度
+                    var historyTemplate = historyRoot?.Find(
+                        "SafeAreaContent/ScrollView/Viewport/Content/HistoryItemTemplate");
+                    if (historyTemplate != null)
+                    {
+                        var priorityRect = (RectTransform)historyTemplate.Find("PriorityTag");
+                        var statusRect = (RectTransform)historyTemplate.Find("StatusTag");
+                        var timeRect = (RectTransform)historyTemplate.Find("TimeText");
+                        var tagsPlaced = priorityRect != null && statusRect != null
+                            && priorityRect.anchoredPosition.y <= -100f
+                            && statusRect.anchoredPosition.y <= -100f
+                            && priorityRect.rect.height >= 64f
+                            && statusRect.rect.height >= 64f
+                            && priorityRect.anchoredPosition.x + priorityRect.rect.width
+                                <= statusRect.anchoredPosition.x;
+                        Check(tagsPlaced, "历史卡片优先级/状态标签位于标题下方、尺寸为正且左右不重叠");
+                        Check(timeRect != null && timeRect.rect.height >= 80f,
+                            "历史卡片时间行预留两行高度（创建/更新不截断）");
+                    }
+                    Check(HasRounded(historyTemplate, 20f), "历史卡片启用运行时圆角");
+                    var diagnosticsToggle = appUi.Find(
+                        "SettingsPanelRoot/SafeAreaContent/SettingsCard/Viewport/Content/DiagnosticsSection/FullDiagnosticsToggle");
+                    Check(diagnosticsToggle != null && diagnosticsToggle.Find("CheckFrame") != null,
+                        "完整诊断开关关闭态保留可见方框（不只依赖隐藏的勾选块）");
+
+                    // 系统返回统一分发（计划 007 4.5）
+                    var backHandler = UnityEngine.Object.FindFirstObjectByType<Inspection.UI.AndroidBackHandler>(
+                        FindObjectsInactive.Include);
+                    Check(backHandler != null, "场景含 AndroidBackHandler（系统返回统一分发）");
+                    if (backHandler != null)
+                    {
+                        var backSo = new SerializedObject(backHandler);
+                        Check(backSo.FindProperty("loginPanel").objectReferenceValue != null
+                            && backSo.FindProperty("settingsPanel").objectReferenceValue != null
+                            && backSo.FindProperty("historyPanel").objectReferenceValue != null
+                            && backSo.FindProperty("formPanel").objectReferenceValue != null
+                            && backSo.FindProperty("placement").objectReferenceValue != null
+                            && backSo.FindProperty("toast").objectReferenceValue != null,
+                            "AndroidBackHandler 已接线登录/设置/历史/表单/放置与提示");
+                    }
+
+                    // 层级顺序：表单盖住顶部栏/引导/跟随按钮，设置在登录之上（登录前可配置后端），Toast 最上
+                    var order = new[] { "ReportButtonRoot", "TopBar", "FieldGuideRoot", "DevDebugOverlay",
+                        "FormPanelRoot", "HistoryPanelRoot", "LoginPanelRoot", "SettingsPanelRoot", "ToastRoot" };
                     var orderOk = appUi.childCount == order.Length;
                     if (orderOk)
                     {
@@ -474,6 +544,8 @@ namespace Inspection.EditorTools
                 var content = File.ReadAllText(manifestPath);
                 Check(content.Contains("com.google.ar.core"), "Manifest 含 com.google.ar.core 包可见性声明");
                 Check(content.Contains("android.permission.INTERNET"), "Manifest 含 INTERNET 权限");
+                Check(content.Contains("android:enableOnBackInvokedCallback=\"false\""),
+                    "Manifest 显式关闭预测性返回回调（系统返回走 Unity Escape 事件）");
             }
         }
     }

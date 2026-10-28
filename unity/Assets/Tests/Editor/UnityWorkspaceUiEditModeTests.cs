@@ -137,4 +137,93 @@ public class UnityWorkspaceUiEditModeTests
         Assert.IsNotNull(login.GetField("text", BindingFlags.NonPublic | BindingFlags.Instance));
         Assert.IsNotNull(tag.GetField("text", BindingFlags.NonPublic | BindingFlags.Instance));
     }
+
+    [Test]
+    public void BackRouter_KeyboardTakesPriorityOverEveryPanel()
+    {
+        var state = new BackState(keyboardActive: true, settingsOpen: true, loginOpen: true,
+            historyOpen: true, formOpen: true, formSubmitting: false, exitArmed: true);
+        Assert.AreEqual(BackAction.DismissKeyboard, BackRouter.Decide(state));
+    }
+
+    [Test]
+    public void BackRouter_ClosesTopmostPanelInLayerOrder()
+    {
+        // 设置叠加在登录之上：先关设置，不退出也不隐藏登录
+        Assert.AreEqual(BackAction.CloseSettings,
+            BackRouter.Decide(new BackState(false, true, true, true, false, false, false)));
+        Assert.AreEqual(BackAction.CloseHistory,
+            BackRouter.Decide(new BackState(false, false, false, true, false, false, false)));
+        Assert.AreEqual(BackAction.CollapseForm,
+            BackRouter.Decide(new BackState(false, false, false, false, true, false, false)));
+    }
+
+    [Test]
+    public void BackRouter_LoginNeverClosesAndNeedsDoubleBackToExit()
+    {
+        Assert.AreEqual(BackAction.ConfirmExit,
+            BackRouter.Decide(new BackState(false, false, true, true, false, false, false)));
+        Assert.AreEqual(BackAction.Exit,
+            BackRouter.Decide(new BackState(false, false, true, true, false, false, true)));
+    }
+
+    [Test]
+    public void BackRouter_SubmittingFormIgnoresBack()
+    {
+        Assert.AreEqual(BackAction.None,
+            BackRouter.Decide(new BackState(false, false, false, false, true, true, false)));
+        Assert.AreEqual(BackAction.CollapseForm,
+            BackRouter.Decide(new BackState(false, false, false, false, true, false, false)));
+    }
+
+    [Test]
+    public void BackRouter_RootNeedsSecondBackWithinTwoSeconds()
+    {
+        Assert.AreEqual(BackAction.ConfirmExit,
+            BackRouter.Decide(new BackState(false, false, false, false, false, false, false)));
+        Assert.AreEqual(BackAction.Exit,
+            BackRouter.Decide(new BackState(false, false, false, false, false, false, true)));
+        Assert.AreEqual(2f, BackRouter.ExitConfirmWindowSeconds);
+    }
+
+    [Test]
+    public void BackRouter_ExitMessageWarnsOnlyWhenDraftExists()
+    {
+        StringAssert.Contains("草稿", BackRouter.ConfirmExitMessage(true));
+        StringAssert.DoesNotContain("草稿", BackRouter.ConfirmExitMessage(false));
+    }
+
+    [Test]
+    public void HistoryTagView_TintsTextAndBackgroundFromSemanticText()
+    {
+        var root = new GameObject("HistoryTag");
+        try
+        {
+            var background = root.AddComponent<Image>();
+            background.color = UiVisualStyle.Tint(UiVisualStyle.Open);
+            var labelObject = new GameObject("Label");
+            labelObject.transform.SetParent(root.transform, false);
+            var label = labelObject.AddComponent<Text>();
+            var tag = root.AddComponent<HistoryTagView>();
+
+            label.text = "优先级 高";
+            tag.Configure(label, background, true);
+            Assert.AreEqual(UiVisualStyle.High, label.color);
+            Assert.AreEqual(UiVisualStyle.Tint(UiVisualStyle.High), background.color);
+
+            label.text = "优先级 低";
+            tag.Refresh();
+            Assert.AreEqual(UiVisualStyle.Low, label.color);
+            Assert.AreEqual(UiVisualStyle.Tint(UiVisualStyle.Low), background.color);
+
+            label.text = "已解决";
+            tag.Configure(label, background, false);
+            Assert.AreEqual(UiVisualStyle.Resolved, label.color);
+            Assert.AreEqual(UiVisualStyle.Tint(UiVisualStyle.Resolved), background.color);
+        }
+        finally
+        {
+            Object.DestroyImmediate(root);
+        }
+    }
 }

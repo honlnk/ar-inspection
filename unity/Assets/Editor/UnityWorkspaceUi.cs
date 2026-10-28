@@ -102,6 +102,21 @@ namespace Inspection.EditorTools
             return image;
         }
 
+        /// <summary>为 Image 增加运行时圆角（纹理运行时生成，不引入外部美术资源）。</summary>
+        internal static void Round(Image image, float radius)
+        {
+            if (image == null)
+            {
+                return;
+            }
+            var rounded = image.GetComponent<Inspection.UI.RoundedImage>();
+            if (rounded == null)
+            {
+                rounded = image.gameObject.AddComponent<Inspection.UI.RoundedImage>();
+            }
+            rounded.Radius = radius;
+        }
+
         internal static Text Text(Transform parent, string name, string content, int size, Color color,
             TextAnchor alignment = TextAnchor.MiddleLeft)
         {
@@ -136,6 +151,7 @@ namespace Inspection.EditorTools
         internal static Button ButtonOn(RectTransform rect, string text, Color background, Color foreground, bool primary)
         {
             var image = Surface(rect, background);
+            Round(image, UiVisualStyle.ControlRadius);
             var button = rect.gameObject.AddComponent<Button>();
             button.targetGraphic = image;
             var colors = button.colors;
@@ -165,7 +181,8 @@ namespace Inspection.EditorTools
         {
             var rect = Rect(parent, name, Vector2.zero, Vector2.zero);
             Top(rect, top, height);
-            Surface(rect, UiVisualStyle.Surface);
+            var image = Surface(rect, UiVisualStyle.Surface);
+            Round(image, UiVisualStyle.CardRadius);
             return rect;
         }
 
@@ -175,6 +192,7 @@ namespace Inspection.EditorTools
             var root = Rect(parent, name, Vector2.zero, Vector2.zero);
             Top(root, y, height);
             var image = Surface(root, UiVisualStyle.Surface);
+            Round(image, UiVisualStyle.ControlRadius);
             var outline = root.gameObject.AddComponent<Outline>();
             outline.effectColor = UiVisualStyle.Border;
             outline.effectDistance = new Vector2(2f, -2f);
@@ -202,18 +220,29 @@ namespace Inspection.EditorTools
             var rect = Rect(parent, name, Vector2.zero, Vector2.zero);
             Top(rect, y, height);
             var image = Surface(rect, UiVisualStyle.Surface);
+            Round(image, UiVisualStyle.ControlRadius);
             var outline = rect.gameObject.AddComponent<Outline>();
             outline.effectColor = UiVisualStyle.Border;
             outline.effectDistance = new Vector2(2f, -2f);
-            var check = Rect(rect, "Checkmark", Vector2.zero, new Vector2(48f, 48f));
+            // 关闭态仍要有可见方框：勾选块由 Toggle 淡出，边框必须独立保留
+            var frame = Rect(rect, "CheckFrame", Vector2.zero, new Vector2(56f, 56f));
+            frame.anchorMin = frame.anchorMax = new Vector2(0f, 0.5f);
+            frame.anchoredPosition = new Vector2(48f, 0f);
+            var frameImage = Surface(frame, UiVisualStyle.Surface, false);
+            Round(frameImage, UiVisualStyle.TagRadius);
+            var frameOutline = frame.gameObject.AddComponent<Outline>();
+            frameOutline.effectColor = UiVisualStyle.Border;
+            frameOutline.effectDistance = new Vector2(2f, -2f);
+            var check = Rect(rect, "Checkmark", Vector2.zero, new Vector2(44f, 44f));
             check.anchorMin = check.anchorMax = new Vector2(0f, 0.5f);
             check.anchoredPosition = new Vector2(48f, 0f);
-            Surface(check, UiVisualStyle.Primary, false);
+            var checkImage = Surface(check, UiVisualStyle.Primary, false);
+            Round(checkImage, UiVisualStyle.TagRadius);
             var label = Text(rect, "Label", text, UiVisualStyle.BodyFontSize, UiVisualStyle.Ink);
             StretchPad(label.rectTransform, 132f, 0f);
             var toggle = rect.gameObject.AddComponent<Toggle>();
             toggle.targetGraphic = image;
-            toggle.graphic = check.GetComponent<Image>();
+            toggle.graphic = checkImage;
             toggle.isOn = false;
             return toggle;
         }

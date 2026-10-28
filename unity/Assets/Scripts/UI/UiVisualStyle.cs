@@ -10,6 +10,12 @@ namespace Inspection.UI
         public const float MinimumButtonHeight = 144f;
         public const float MinimumInputHeight = 132f;
 
+        // 圆角半径（UI 设计单位）：卡片、表单、控件与标签分层，运行时由 RoundedImage 生成
+        public const float CardRadius = 24f;
+        public const float FormCardRadius = 28f;
+        public const float ControlRadius = 12f;
+        public const float TagRadius = 8f;
+
         public static readonly Color Page = FromHex("F1F5F9");
         public static readonly Color Surface = Color.white;
         public static readonly Color Ink = FromHex("172033");

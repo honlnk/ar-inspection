@@ -75,8 +75,8 @@ describe('会话门控', () => {
     render(<App />)
 
     await waitFor(() => expect(fetchCurrentUserMock).toHaveBeenCalledTimes(1))
-    // 进入管理台：出现退出按钮与实时状态
-    expect(await screen.findByRole('button', { name: /退出登录/ })).toBeInTheDocument()
+    // 进入管理台：出现退出按钮与实时状态（桌面侧栏与窄屏账户菜单各有一个）
+    expect(await screen.findAllByRole('button', { name: /退出登录/ })).not.toHaveLength(0)
   })
 
   it('巡检员账号在网页端提示角色不适用，停留在登录页', async () => {
@@ -106,7 +106,7 @@ describe('会话门控', () => {
     await user.clear(screen.getByPlaceholderText('admin'))
     await user.type(screen.getByPlaceholderText('admin'), 'admin')
     await user.click(screen.getByRole('button', { name: '登录' }))
-    expect(await screen.findByRole('button', { name: /退出登录/ })).toBeInTheDocument()
+    expect(await screen.findAllByRole('button', { name: /退出登录/ })).not.toHaveLength(0)
   })
 
   it('登录失败显示后端中文错误，不白屏', async () => {
@@ -127,7 +127,8 @@ describe('会话门控', () => {
     const user = userEvent.setup()
     fetchCurrentUserMock.mockResolvedValue(admin)
     render(<App />)
-    const logoutButton = await screen.findByRole('button', { name: /退出登录/ })
+    // 两个断点各渲染一个退出按钮，测试取第一个（二者绑定同一回调）
+    const logoutButton = (await screen.findAllByRole('button', { name: /退出登录/ }))[0]
 
     logoutMock.mockResolvedValueOnce(undefined)
     await user.click(logoutButton)
@@ -147,7 +148,7 @@ describe('双入口导航（计划 008）', () => {
     const user = userEvent.setup()
     fetchCurrentUserMock.mockResolvedValue(admin)
     render(<App />)
-    expect(await screen.findByRole('button', { name: /退出登录/ })).toBeInTheDocument()
+    expect(await screen.findAllByRole('button', { name: /退出登录/ })).not.toHaveLength(0)
 
     await user.click(navButton('人员管理'))
     expect(await screen.findByText('新增巡检员')).toBeInTheDocument()
@@ -160,7 +161,7 @@ describe('双入口导航（计划 008）', () => {
     fetchCurrentUserMock.mockResolvedValue(admin)
     fetchIssuesMock.mockResolvedValue([])
     render(<App />)
-    expect(await screen.findByRole('button', { name: /退出登录/ })).toBeInTheDocument()
+    expect(await screen.findAllByRole('button', { name: /退出登录/ })).not.toHaveLength(0)
     await waitFor(() => expect(fetchIssuesMock).toHaveBeenCalledTimes(1))
 
     await user.click(navButton('人员管理'))

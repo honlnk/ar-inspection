@@ -16,8 +16,11 @@
         <package android:name="com.google.ar.core" />
     </queries>
 
-    <!-- networkSecurityConfig 引用 Plugins/Android/res/xml/ 下的明文放行配置（联调 http:// 后端） -->
-    <application android:networkSecurityConfig="@xml/network_security_config">
+    <!-- networkSecurityConfig 引用 Plugins/Android/res/xml/ 下的明文放行配置（联调 http:// 后端）
+         enableOnBackInvokedCallback=false：Android 13+ 仍把系统返回键/边缘返回手势交给 Activity 的
+         传统返回事件，Unity 以 Escape 键送达 AndroidBackHandler；本期不使用预测性返回回调 -->
+    <application android:networkSecurityConfig="@xml/network_security_config"
+                 android:enableOnBackInvokedCallback="false">
         <activity android:name="com.unity3d.player.UnityPlayerActivity"
                   android:theme="@style/UnityThemeSelector"
                   android:exported="true">

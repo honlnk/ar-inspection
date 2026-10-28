@@ -11,10 +11,10 @@ namespace Inspection.UI
         [SerializeField] private bool priority;
         private string lastText;
 
-        public void Configure(Text label, bool isPriority)
+        public void Configure(Text label, Image tagBackground, bool isPriority)
         {
             text = label;
-            background = label.GetComponent<Image>();
+            background = tagBackground;
             priority = isPriority;
             Refresh();
         }
@@ -24,7 +24,8 @@ namespace Inspection.UI
             Refresh();
         }
 
-        private void Refresh()
+        /// <summary>按当前文案同步文字与底板颜色（运行时每帧检查，测试可直接调用）。</summary>
+        public void Refresh()
         {
             if (text == null || text.text == lastText)
             {

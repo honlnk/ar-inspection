@@ -37,6 +37,11 @@ namespace Inspection.EditorTools
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android, false);
             PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[] { GraphicsDeviceType.OpenGLES3 });
 
+            // 计划 007 4.5：系统返回统一走 Unity 旧输入的 Escape 事件。
+            // 开启预测性返回会让返回由 OnBackInvokedCallback 接管，与 AndroidBackHandler 的
+            // 层级分发不一致，因此构建前强制关闭（幂等，防止 ProjectSettings 漂移）。
+            PlayerSettings.Android.predictiveBackSupport = false;
+
             Directory.CreateDirectory("Builds");
 
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions

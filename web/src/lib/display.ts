@@ -16,17 +16,25 @@ const STATUS_LABELS: Record<Status, string> = {
   resolved: '已解决',
 }
 
-/** 动态颜色通过完整静态类名映射表达，不在运行时拼接 Tailwind 类名 */
+/** 动态颜色通过完整静态类名映射表达，不在运行时拼接 Tailwind 类名。
+    优先级始终带中文“低/中/高”，状态始终带中文状态文字，不单独依赖颜色传达信息。 */
 const PRIORITY_BADGE_CLASSES: Record<Priority, string> = {
-  low: 'bg-slate-100 text-slate-600',
-  medium: 'bg-amber-50 text-amber-700',
-  high: 'bg-red-50 text-red-700',
+  low: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  medium: 'bg-amber-50 text-amber-700 ring-amber-200',
+  high: 'bg-red-50 text-red-700 ring-red-200',
 }
 
 const STATUS_BADGE_CLASSES: Record<Status, string> = {
-  open: 'bg-red-50 text-red-700',
-  in_progress: 'bg-amber-50 text-amber-700',
-  resolved: 'bg-emerald-50 text-emerald-700',
+  open: 'bg-orange-50 text-orange-700 ring-orange-200',
+  in_progress: 'bg-blue-50 text-blue-700 ring-blue-200',
+  resolved: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+}
+
+/** 列表左侧优先级色条：颜色只是辅助，旁边始终有中文优先级标签 */
+const PRIORITY_ACCENT_CLASSES: Record<Priority, string> = {
+  low: 'bg-emerald-500',
+  medium: 'bg-amber-500',
+  high: 'bg-red-500',
 }
 
 const UNKNOWN_BADGE_CLASSES = 'bg-slate-100 text-slate-500'
@@ -47,6 +55,10 @@ export function priorityBadgeClasses(value: string): string {
 
 export function statusBadgeClasses(value: string): string {
   return value in STATUS_BADGE_CLASSES ? STATUS_BADGE_CLASSES[value as Status] : UNKNOWN_BADGE_CLASSES
+}
+
+export function priorityAccentClasses(value: string): string {
+  return value in PRIORITY_ACCENT_CLASSES ? PRIORITY_ACCENT_CLASSES[value as Priority] : 'bg-slate-300'
 }
 
 const beijingFormatter = new Intl.DateTimeFormat('zh-CN', {

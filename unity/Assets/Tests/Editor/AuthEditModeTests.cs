@@ -163,22 +163,24 @@ public class AuthEditModeTests
     public void AuthSession_SaveAndClear_RoundTripsWithoutPassword()
     {
         Assert.IsFalse(AuthSession.HasToken);
-        AuthSession.Save("tok-abc", "巡检员", "inspector");
+        AuthSession.Save("tok-abc", "zhangsan", "巡检员", "inspector");
         Assert.IsTrue(AuthSession.HasToken);
         Assert.IsTrue(AuthSession.IsInspector);
         Assert.AreEqual("tok-abc", AuthSession.Token);
+        Assert.AreEqual("zhangsan", AuthSession.Username, "历史页按用户名区分巡检员，必须持久化");
         Assert.AreEqual("巡检员", AuthSession.DisplayName);
 
         AuthSession.Clear();
         Assert.IsFalse(AuthSession.HasToken);
         Assert.IsFalse(AuthSession.IsInspector);
         Assert.AreEqual(string.Empty, AuthSession.Token);
+        Assert.AreEqual(string.Empty, AuthSession.Username);
     }
 
     [Test]
     public void AuthSession_AdminRole_IsNotInspector()
     {
-        AuthSession.Save("tok", "管理员", "admin");
+        AuthSession.Save("tok", "admin", "管理员", "admin");
         Assert.IsTrue(AuthSession.HasToken);
         Assert.IsFalse(AuthSession.IsInspector, "管理员令牌存在也不得进入巡检主界面");
     }

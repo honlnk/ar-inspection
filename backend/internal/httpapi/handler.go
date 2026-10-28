@@ -90,11 +90,18 @@ func (h *Handler) health(c *gin.Context) {
 
 // listIssues 按当前角色返回授权范围列表：巡检员仅见自己创建的问题，
 // 管理员见全部（含无归属记录的旧数据）。字段与既有问题契约完全一致。
+// 角色判断失败关闭：未知角色返回 403，绝不因未匹配到分支而退化为返回全量。
 func (h *Handler) listIssues(c *gin.Context) {
 	user := CurrentUser(c)
-	ownerID := ""
-	if user.Role == auth.RoleInspector {
+	var ownerID string
+	switch user.Role {
+	case auth.RoleAdmin:
+		ownerID = "" // 空 ownerID 表示全量，仅供管理员
+	case auth.RoleInspector:
 		ownerID = auth.UserID(user.Username)
+	default:
+		fail(c, http.StatusForbidden, "permission_denied", "当前账号没有查看问题列表的权限")
+		return
 	}
 	issues, err := h.store.List(c.Request.Context(), ownerID)
 	if err != nil {

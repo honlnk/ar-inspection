@@ -73,9 +73,9 @@ func TestAuth_LoginFailures(t *testing.T) {
 	}
 
 	for name, body := range map[string]string{
-		"未知字段":  `{"username":"admin","password":"x","extra":1}`,
-		"语法错误":  `{"username":`,
-		"类型错误":  `{"username":1,"password":"x"}`,
+		"未知字段":    `{"username":"admin","password":"x","extra":1}`,
+		"语法错误":    `{"username":`,
+		"类型错误":    `{"username":1,"password":"x"}`,
 		"额外 JSON": `{"username":"a","password":"b"}{}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -198,6 +198,72 @@ func TestDataScope(t *testing.T) {
 	if len(adminList.Data) != 2 {
 		t.Fatalf("管理员应见全部 2 条（含旧数据），实际 %d 条", len(adminList.Data))
 	}
+}
+
+// TestDataScope_TwoInspectorsSeeOnlyOwnIssues 验证多个巡检员账号之间互相不可见：
+// 张三的上报不出现在 inspector 的历史列表，inspector 的上报也不出现在张三列表；
+// 管理员仍见全部。这是 Unity「历史」页按账号隔离的回归防线。
+func TestDataScope_TwoInspectorsSeeOnlyOwnIssues(t *testing.T) {
+	env := newTestRouter(t)
+	mustCreateZhangsan(t, env)
+
+	login := tryLogin(env.Router, "zhangsan", "zhangsan-pw-1")
+	if login.Code != http.StatusOK {
+		t.Fatalf("zhangsan 登录失败: %d %s", login.Code, login.Body.String())
+	}
+	zhangsanToken := extractSessionCookie(login)
+	if zhangsanToken == "" {
+		t.Fatal("zhangsan 登录未设置会话 Cookie")
+	}
+
+	inspectorIssue := createIssueViaHTTP(t, env)
+	zRec := requestWithBearer(env.Router, http.MethodPost, "/api/issues",
+		`{"title":"张三上报","description":"","priority":"low","position":{"x":0,"y":0,"z":0}}`, zhangsanToken)
+	if zRec.Code != http.StatusCreated {
+		t.Fatalf("zhangsan 上报失败: %d %s", zRec.Code, zRec.Body.String())
+	}
+	var zCreated struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(zRec.Body.Bytes(), &zCreated); err != nil {
+		t.Fatalf("解析 zhangsan 创建响应失败: %v", err)
+	}
+
+	inspIDs := listIssueIDsWithToken(t, env, env.Inspector)
+	if len(inspIDs) != 1 || inspIDs[0] != inspectorIssue["id"].(string) {
+		t.Fatalf("inspector 应只见自己的 1 条，实际 %v", inspIDs)
+	}
+	zIDs := listIssueIDsWithToken(t, env, zhangsanToken)
+	if len(zIDs) != 1 || zIDs[0] != zCreated.Data.ID {
+		t.Fatalf("zhangsan 应只见自己的 1 条，实际 %v", zIDs)
+	}
+	if adminIDs := listIssueIDsWithToken(t, env, env.Admin); len(adminIDs) != 2 {
+		t.Fatalf("管理员应见全部 2 条，实际 %v", adminIDs)
+	}
+}
+
+// listIssueIDsWithToken 以指定令牌拉取问题列表并返回 ID 序列。
+func listIssueIDsWithToken(t *testing.T, env *testEnv, token string) []string {
+	t.Helper()
+	rec := requestWithBearer(env.Router, http.MethodGet, "/api/issues", "", token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("列表期望 200，实际 %d %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析列表失败: %v", err)
+	}
+	ids := make([]string, 0, len(resp.Data))
+	for _, it := range resp.Data {
+		ids = append(ids, it.ID)
+	}
+	return ids
 }
 
 // TestSessionPersistenceAcrossRestart 验证后端重启（重开数据库连接）后

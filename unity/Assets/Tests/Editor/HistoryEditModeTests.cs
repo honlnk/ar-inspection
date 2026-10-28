@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Inspection.API;
+using Inspection.UI;
 
 /// <summary>
 /// 计划 006 历史列表契约 EditMode 测试：列表响应解析（成功/空/401/错误/网络）、
@@ -43,7 +44,7 @@ public class HistoryEditModeTests
     {
         var result = HistoryApiClient.ParseListResponse(200, "{\"data\":[]}", null);
         Assert.IsTrue(result.Success);
-        Assert.AreEqual(0, result.Issues.Length, "空列表是成功状态（面板显示「暂无历史上报」）");
+        Assert.AreEqual(0, result.Issues.Length, "空列表是成功状态（面板显示「暂无我的上报」）");
     }
 
     [Test]
@@ -158,6 +159,34 @@ public class HistoryEditModeTests
         Assert.AreEqual("x 1.500   y 2.000   z -0.500",
             HistoryApiClient.FormatPosition(new IssuePosition { x = 1.5, y = 2, z = -0.5 }));
         Assert.AreEqual("-", HistoryApiClient.FormatPosition(null));
+    }
+
+    // ---------- 历史页按巡检员隔离（账号行与换账号清理） ----------
+
+    [Test]
+    public void AccountLine_DisplayName_StatesOwnScope()
+    {
+        Assert.AreEqual("当前账号：张三（仅显示本人上报）",
+            HistoryPanelController.AccountLine("张三", "zhangsan"));
+    }
+
+    [Test]
+    public void AccountLine_EmptyDisplayName_FallsBackToUsernameThenInspector()
+    {
+        Assert.AreEqual("当前账号：zhangsan（仅显示本人上报）",
+            HistoryPanelController.AccountLine(null, "zhangsan"));
+        Assert.AreEqual("当前账号：巡检员（仅显示本人上报）",
+            HistoryPanelController.AccountLine("", ""));
+    }
+
+    [Test]
+    public void IsAccountChanged_OnlyWhenLoadedAccountDiffers()
+    {
+        Assert.IsTrue(HistoryPanelController.IsAccountChanged("inspector", "zhangsan"),
+            "加载过 inspector 的列表后切换到 zhangsan，必须清理旧账号数据");
+        Assert.IsFalse(HistoryPanelController.IsAccountChanged("inspector", "inspector"));
+        Assert.IsFalse(HistoryPanelController.IsAccountChanged("", "zhangsan"),
+            "尚未加载过列表时没有需要清理的旧账号数据");
     }
 
     // ---------- 创建接口 401 语义（会话过期引导重登） ----------

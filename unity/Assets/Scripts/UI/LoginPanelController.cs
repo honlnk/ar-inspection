@@ -117,7 +117,7 @@ namespace Inspection.UI
                 return;
             }
 
-            AuthSession.Save(result.Token, result.User.displayName, result.User.role);
+            AuthSession.Save(result.Token, result.User.username, result.User.displayName, result.User.role);
             EnterMain();
         }
 
@@ -125,8 +125,8 @@ namespace Inspection.UI
         {
             if (result.Valid && result.User.role == RoleInspector)
             {
-                // 恢复成功：同步显示名（令牌原样保留，服务端会话仍在有效期内）
-                AuthSession.Save(AuthSession.Token, result.User.displayName, result.User.role);
+                // 恢复成功：同步用户名/显示名（令牌原样保留，服务端会话仍在有效期内）
+                AuthSession.Save(AuthSession.Token, result.User.username, result.User.displayName, result.User.role);
                 EnterMain();
                 return;
             }

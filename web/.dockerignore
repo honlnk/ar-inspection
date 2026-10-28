@@ -1,0 +1,5 @@
+# 计划 006 4.3：不把本机依赖与构建产物带进镜像
+node_modules
+dist
+.git
+*.local

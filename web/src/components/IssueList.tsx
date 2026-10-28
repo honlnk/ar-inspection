@@ -16,6 +16,10 @@ export interface IssueListProps {
   busy: boolean
   /** 正在保存的问题 ID，用于该行按钮显示保存中 */
   savingId: string | null
+  /** 存在未保存草稿且服务端状态已被其他客户端更新的行：显示“远端已更新”提示 */
+  remoteUpdatedIds: ReadonlySet<string>
+  /** 空列表文案：区分“暂无问题”与“没有符合当前条件的问题” */
+  emptyText: string
   onDraftChange: (id: string, status: Status) => void
   onSave: (issue: Issue) => void
 }
@@ -24,13 +28,13 @@ export interface IssueListProps {
  * 问题列表：卡片容器 + 真实数据表格。
  * 表格内部只保留加载、空列表或首次失败的行内说明；其余反馈统一由页面上方反馈区表达。
  */
-export function IssueList({ issues, drafts, state, busy, savingId, onDraftChange, onSave }: IssueListProps) {
+export function IssueList({ issues, drafts, state, busy, savingId, remoteUpdatedIds, emptyText, onDraftChange, onSave }: IssueListProps) {
   const count = state === 'success' ? issues.length : '—'
   return (
     <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 md:px-5">
         <h2 className="text-sm font-semibold text-slate-700">问题列表</h2>
-        <span className="text-xs text-slate-400">共 {count} 条</span>
+        <span className="text-xs text-slate-400">显示 {count} 条</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] text-left text-sm">
@@ -49,13 +53,14 @@ export function IssueList({ issues, drafts, state, busy, savingId, onDraftChange
             ) : state === 'error' ? (
               <PlaceholderRow>暂时无法显示问题列表，请稍后重试</PlaceholderRow>
             ) : issues.length === 0 ? (
-              <PlaceholderRow>暂无问题</PlaceholderRow>
+              <PlaceholderRow>{emptyText}</PlaceholderRow>
             ) : (
               issues.map(issue => (
                 <IssueRow
                   key={issue.id}
                   issue={issue}
                   draft={drafts[issue.id]}
+                  remoteUpdated={remoteUpdatedIds.has(issue.id)}
                   busy={busy}
                   saving={savingId === issue.id}
                   onDraftChange={onDraftChange}
@@ -83,6 +88,7 @@ function PlaceholderRow({ children }: { children: string }) {
 function IssueRow({
   issue,
   draft,
+  remoteUpdated,
   busy,
   saving,
   onDraftChange,
@@ -90,6 +96,7 @@ function IssueRow({
 }: {
   issue: Issue
   draft?: Status
+  remoteUpdated: boolean
   busy: boolean
   saving: boolean
   onDraftChange: (id: string, status: Status) => void
@@ -115,6 +122,9 @@ function IssueRow({
         <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusBadgeClasses(issue.status)}`}>
           {statusLabel(issue.status)}
         </span>
+        {remoteUpdated && (
+          <div className="mt-1 text-xs text-amber-600">远端已更新，草稿未保存</div>
+        )}
       </td>
       <td className="px-4 py-3 whitespace-nowrap text-slate-500">{formatBeijingTime(issue.updatedAt)}</td>
       <td className="px-4 py-3">

@@ -85,7 +85,11 @@ async function requestEnvelope(path: string, init: RequestInit, signal?: AbortSi
   signal?.addEventListener('abort', onExternalAbort)
   if (signal?.aborted) controller.abort()
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, { ...init, signal: controller.signal })
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+      credentials: 'include',
+    })
     return await parseEnvelope(response)
   } catch (error) {
     if (timedOut) {

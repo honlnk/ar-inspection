@@ -52,7 +52,7 @@ describe('fetchIssues', () => {
     const issues = await fetchIssues()
 
     expect(issues).toEqual([sampleIssue])
-    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(`${API_BASE_URL}/api/issues`, { method: 'GET', signal: expect.any(AbortSignal) })
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(`${API_BASE_URL}/api/issues`, { method: 'GET', signal: expect.any(AbortSignal), credentials: 'include' })
   })
 
   it('空数组是合法结果', async () => {
@@ -101,7 +101,7 @@ describe('fetchIssues', () => {
 
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
       `${API_BASE_URL}/api/issues`,
-      { method: 'GET', signal: expect.any(AbortSignal) },
+      { method: 'GET', signal: expect.any(AbortSignal), credentials: 'include' },
     )
   })
 

@@ -42,31 +42,40 @@ func NewService(store Store, secret []byte) *Service {
 // SetClock 替换时间来源（测试用）。
 func (s *Service) SetClock(c Clock) { s.clock = c }
 
-// EnsureAccounts 幂等建立或更新两个本地演示账号。
+// EnsureAccounts 建立本地演示账号（计划 008 调整语义）：
+//   - 管理员：每次启动按环境变量同步显示名与密码（忘记密码时改环境文件重启即可恢复）；
+//   - 巡检员：仅库中无任何账号（首次启动）时创建一次；此后完全由人员管理页维护，
+//     删除后重启不复活。
+//
 // 任一密码为空即返回错误：不为开发环境设置可猜测的默认密码。
 func (s *Service) EnsureAccounts(ctx context.Context, inspectorPassword, adminPassword string) error {
 	if strings.TrimSpace(inspectorPassword) == "" || strings.TrimSpace(adminPassword) == "" {
 		return fmt.Errorf("缺少演示账号密码环境变量（INSPECTOR_PASSWORD / ADMIN_PASSWORD），拒绝启动")
 	}
 	now := NowString(s.clock.Now())
-	accounts := []struct {
-		username, displayName string
-		role                 Role
-		password             string
-	}{
-		{"inspector", "巡检员", RoleInspector, inspectorPassword},
-		{"admin", "管理员", RoleAdmin, adminPassword},
+
+	// 巡检员仅首启创建：判定必须先于管理员写入，否则计数永远大于 0。
+	// 库中已有任何账号（含巡检员被删、只剩管理员）都不再插手。
+	count, err := s.store.CountUsers(ctx)
+	if err != nil {
+		return err
 	}
-	for _, a := range accounts {
-		hash, err := bcrypt.GenerateFromPassword([]byte(a.password), bcrypt.DefaultCost)
+	if count == 0 {
+		inspHash, err := bcrypt.GenerateFromPassword([]byte(inspectorPassword), bcrypt.DefaultCost)
 		if err != nil {
 			return fmt.Errorf("生成密码哈希失败: %w", err)
 		}
-		if err := s.store.UpsertAccount(ctx, a.username, a.displayName, a.role, string(hash), now); err != nil {
+		if err := s.store.UpsertAccount(ctx, "inspector", "巡检员", RoleInspector, string(inspHash), now); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	// 管理员保持每次启动同步
+	adminHash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("生成密码哈希失败: %w", err)
+	}
+	return s.store.UpsertAccount(ctx, "admin", "管理员", RoleAdmin, string(adminHash), now)
 }
 
 // CleanupExpiredSessions 清理过期会话记录；失败只记日志语义，不阻断启动。
@@ -133,6 +142,111 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 		return nil
 	}
 	return s.store.RevokeSession(ctx, HashToken(s.secret, token), NowString(s.clock.Now()))
+}
+
+// ---- 计划 008：人员管理服务层 ----
+
+// ListManagedAccounts 返回全部账号的管理视图（按用户名排序），不含密码哈希。
+func (s *Service) ListManagedAccounts(ctx context.Context) ([]ManagedAccount, error) {
+	users, err := s.store.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	accounts := make([]ManagedAccount, 0, len(users))
+	for _, u := range users {
+		accounts = append(accounts, ManagedAccount{
+			Username:    u.Username,
+			DisplayName: u.DisplayName,
+			Role:        u.Role,
+			CreatedAt:   u.CreatedAt,
+			UpdatedAt:   u.UpdatedAt,
+		})
+	}
+	return accounts, nil
+}
+
+// CreateInspector 创建巡检员账号：领域校验（4.3 节规则）通过后写库；
+// 成功后新账号立即可登录，无需重启。返回新账号的管理视图。
+func (s *Service) CreateInspector(ctx context.Context, username, displayName, password string) (ManagedAccount, error) {
+	username = strings.TrimSpace(username)
+	if err := ValidateUsername(username); err != nil {
+		return ManagedAccount{}, err
+	}
+	if err := ValidateDisplayName(displayName); err != nil {
+		return ManagedAccount{}, err
+	}
+	if err := ValidatePassword(password); err != nil {
+		return ManagedAccount{}, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return ManagedAccount{}, fmt.Errorf("生成密码哈希失败: %w", err)
+	}
+	now := NowString(s.clock.Now())
+	if err := s.store.CreateUser(ctx, username, strings.TrimSpace(displayName), string(hash), now); err != nil {
+		return ManagedAccount{}, err
+	}
+	created, err := s.store.FindManagedUser(ctx, username)
+	if err != nil {
+		return ManagedAccount{}, err
+	}
+	return ManagedAccount{
+		Username:    created.Username,
+		DisplayName: created.DisplayName,
+		Role:        created.Role,
+		CreatedAt:   created.CreatedAt,
+		UpdatedAt:   created.UpdatedAt,
+	}, nil
+}
+
+// UpdateInspector 修改巡检员：用户名为路径目标，显示名与/或密码至少一项；
+// 重置密码时清除该账号全部会话（旧令牌下次请求即 401，等价立即踢下线）。
+// 返回更新后的管理视图。
+func (s *Service) UpdateInspector(ctx context.Context, targetUsername string, displayName, password *string) (ManagedAccount, error) {
+	if displayName == nil && password == nil {
+		return ManagedAccount{}, &ValidationError{Message: "至少提供显示名或密码一项修改"}
+	}
+	var namePtr *string
+	if displayName != nil {
+		if err := ValidateDisplayName(*displayName); err != nil {
+			return ManagedAccount{}, err
+		}
+		trimmed := strings.TrimSpace(*displayName)
+		namePtr = &trimmed
+	}
+	var hash string
+	resetSessions := false
+	if password != nil {
+		if err := ValidatePassword(*password); err != nil {
+			return ManagedAccount{}, err
+		}
+		h, err := bcrypt.GenerateFromPassword([]byte(*password), bcrypt.DefaultCost)
+		if err != nil {
+			return ManagedAccount{}, fmt.Errorf("生成密码哈希失败: %w", err)
+		}
+		hash = string(h)
+		resetSessions = true
+	}
+	if err := s.store.UpdateUserFields(ctx, targetUsername, namePtr, hash, resetSessions, NowString(s.clock.Now())); err != nil {
+		return ManagedAccount{}, err
+	}
+	updated, err := s.store.FindManagedUser(ctx, targetUsername)
+	if err != nil {
+		return ManagedAccount{}, err
+	}
+	return ManagedAccount{
+		Username:    updated.Username,
+		DisplayName: updated.DisplayName,
+		Role:        updated.Role,
+		CreatedAt:   updated.CreatedAt,
+		UpdatedAt:   updated.UpdatedAt,
+	}, nil
+}
+
+// DeleteInspector 删除巡检员账号（含其全部会话与问题归属映射）；
+// 问题本体保留，归属转为未知（仅管理员可见），与历史遗留数据同语义。
+func (s *Service) DeleteInspector(ctx context.Context, username string) error {
+	return s.store.DeleteUser(ctx, username)
 }
 
 // ConstantTimeEqual 常量时间字符串比较（测试辅助）。

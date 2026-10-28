@@ -178,6 +178,162 @@ func (s *SQLiteStore) DeleteExpiredSessions(ctx context.Context, now string) err
 	return nil
 }
 
+// ---- 计划 008：人员管理存储实现 ----
+
+// sqliteErrCode 提取 modernc.org/sqlite 错误码；非驱动错误返回 0。
+func sqliteErrCode(err error) int {
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) {
+		return coded.Code()
+	}
+	return 0
+}
+
+// sqliteConstraintUnique 为 UNIQUE 约束冲突的主错误码（2067 = SQLITE_CONSTRAINT_UNIQUE）。
+const sqliteConstraintUnique = 2067
+
+// CountUsers 返回账号总数。
+func (s *SQLiteStore) CountUsers(ctx context.Context) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("统计账号失败: %w", err)
+	}
+	return n, nil
+}
+
+// ListUsers 返回全部账号，按用户名排序。
+func (s *SQLiteStore) ListUsers(ctx context.Context) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, username, display_name, role, password_hash, created_at, updated_at
+		FROM users ORDER BY username ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("查询账号列表失败: %w", err)
+	}
+	defer rows.Close()
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Username, &u.DisplayName, &u.Role, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("读取账号行失败: %w", err)
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历账号列表失败: %w", err)
+	}
+	return users, nil
+}
+
+// CreateUser 创建账号；用户名 UNIQUE 冲突映射为领域错误 ErrUsernameExists。
+func (s *SQLiteStore) CreateUser(ctx context.Context, username, displayName, passwordHash, now string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO users (id, username, display_name, role, password_hash, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, UserID(username), username, displayName, RoleInspector, passwordHash, now, now)
+	if sqliteErrCode(err) == sqliteConstraintUnique {
+		return ErrUsernameExists
+	}
+	if err != nil {
+		return fmt.Errorf("创建账号失败: %w", err)
+	}
+	return nil
+}
+
+// findUserTx 事务内按用户名查询账号行（含 id）；不存在返回 sql.ErrNoRows。
+func findUserTx(ctx context.Context, tx *sql.Tx, username string) (User, error) {
+	var u User
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, username, display_name, role, password_hash, created_at, updated_at
+		FROM users WHERE username = ?
+	`, username).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Role, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	return u, err
+}
+
+// guardManagedTarget 校验管理操作目标：不存在 → ErrUserNotFound；管理员 → ErrAdminProtected。
+func guardManagedTarget(u User, err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrUserNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("查询目标账号失败: %w", err)
+	}
+	if u.Role == RoleAdmin {
+		return ErrAdminProtected
+	}
+	return nil
+}
+
+// FindManagedUser 按用户名查询账号；不存在返回 ErrUserNotFound。
+func (s *SQLiteStore) FindManagedUser(ctx context.Context, username string) (User, error) {
+	var u User
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, username, display_name, role, password_hash, created_at, updated_at
+		FROM users WHERE username = ?
+	`, username).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Role, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrUserNotFound
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("查询账号失败: %w", err)
+	}
+	return u, nil
+}
+
+// UpdateUserFields 按用户名更新显示名与/或密码；resetSessions 时同事务清会话。
+func (s *SQLiteStore) UpdateUserFields(ctx context.Context, username string, displayName *string, passwordHash string, resetSessions bool, now string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启账号更新事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	u, err := findUserTx(ctx, tx, username)
+	if err := guardManagedTarget(u, err); err != nil {
+		return err
+	}
+	if displayName != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?`, *displayName, now, u.ID); err != nil {
+			return fmt.Errorf("更新显示名失败: %w", err)
+		}
+	}
+	if passwordHash != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, passwordHash, now, u.ID); err != nil {
+			return fmt.Errorf("更新密码失败: %w", err)
+		}
+	}
+	if resetSessions {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, u.ID); err != nil {
+			return fmt.Errorf("清除账号会话失败: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteUser 删除巡检员账号：清归属 → 清会话 → 删账号，同一事务，任一步失败回滚。
+func (s *SQLiteStore) DeleteUser(ctx context.Context, username string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启账号删除事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	u, err := findUserTx(ctx, tx, username)
+	if err := guardManagedTarget(u, err); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM issue_owners WHERE user_id = ?`, u.ID); err != nil {
+		return fmt.Errorf("清除问题归属记录失败: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, u.ID); err != nil {
+		return fmt.Errorf("清除账号会话失败: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, u.ID); err != nil {
+		return fmt.Errorf("删除账号失败: %w", err)
+	}
+	return tx.Commit()
+}
+
 // NewToken 生成 32 字节随机令牌（hex 编码）与对应的 HMAC 摘要。
 // secret 为空时退化为裸 SHA-256（仅测试用；生产启动强制要求 secret）。
 func NewToken(secret []byte) (token, tokenHash string, err error) {

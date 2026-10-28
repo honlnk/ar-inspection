@@ -25,11 +25,12 @@ type Handler struct {
 }
 
 // NewRouter 构建 Gin 引擎：统一响应、CORS（含凭据）、健康检查、账号接口、
-// 受保护的问题业务接口、管理员 WebSocket 与 404/405 统一错误。
-// 权限矩阵（计划 006 第 4.1 节）：
+// 受保护的问题业务接口、人员管理接口、管理员 WebSocket 与 404/405 统一错误。
+// 权限矩阵（计划 006 第 4.1 节 + 计划 008 增补）：
 //   - POST /api/issues            仅巡检员（服务端绑定创建人）
 //   - GET  /api/issues            登录即可；巡检员只见自己的，管理员见全部
 //   - PATCH /api/issues/:id/status 仅管理员
+//   - /api/users（GET/POST/PATCH/DELETE） 仅管理员
 //   - GET  /api/ws                仅管理员
 func NewRouter(store issue.Store, authService *auth.Service, corsOrigins []string, fields issue.FieldGenerator) *gin.Engine {
 	h := &Handler{
@@ -63,6 +64,13 @@ func NewRouter(store issue.Store, authService *auth.Service, corsOrigins []strin
 	issues.GET("", h.listIssues)
 	issues.POST("", RequireRole(auth.RoleInspector), h.createIssue)
 	issues.PATCH("/:id/status", RequireRole(auth.RoleAdmin), h.updateStatus)
+
+	// 人员管理（计划 008）：全部仅管理员
+	users := api.Group("/users", h.Authenticate, RequireRole(auth.RoleAdmin))
+	users.GET("", h.listUsers)
+	users.POST("", h.createUser)
+	users.PATCH("/:username", h.updateUser)
+	users.DELETE("/:username", h.deleteUser)
 
 	api.GET("/ws", h.Authenticate, RequireRole(auth.RoleAdmin), h.handleWS)
 	return engine

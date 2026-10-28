@@ -345,12 +345,14 @@ sequenceDiagram
 | 配置 | 建议默认值 | 说明 |
 | --- | --- | --- |
 | Go `ADDR` | `:8080` | 监听所有网卡，供同一局域网真机访问 |
-| SQLite `ISSUE_DB_PATH` | `./data/inspection.db` | 相对于从 `backend/` 启动的工作目录 |
+| SQLite `ISSUE_DB_PATH` | `./data/inspection.db` | 相对于从 `backend/` 启动的工作目录（容器内为 `/data/inspection.db`，落命名卷） |
+| `INSPECTOR_PASSWORD` / `ADMIN_PASSWORD` | 无默认，必填 | 两个本地演示账号密码（bcrypt 存储），缺失时后端拒绝启动 |
+| `SESSION_SECRET` | 无默认，必填 | 会话令牌 HMAC 密钥，至少 32 字符（推荐随机 64 位 hex） |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 逗号分隔，按实际 Vite 地址调整 |
-| React `VITE_API_BASE_URL` | `http://localhost:8080` | 浏览器与后端同机时使用 |
+| React `VITE_API_BASE_URL` | `http://localhost:8080` | 浏览器与后端同机时使用；Docker 镜像构建时置空走同源代理 |
 | Unity 默认 Base URL | 构建时填写电脑局域网地址 | 运行时覆盖值存于 PlayerPrefs |
 
-不包含凭据的配置示例可以提交，本地覆盖配置不提交。SQLite 不需要数据库账号、密码、DSN 或 Compose 服务。README 需要给出查找电脑局域网 IP、配置 Unity 地址和验证同一 Wi-Fi 的步骤。
+不包含凭据的配置示例可以提交，本地覆盖配置不提交（`backend/.env`、`compose.local.env` 均在 `.gitignore` 内）。SQLite 自带文件持久化，无需外部数据库服务；容器编排见第 11.3 节。README 需要给出查找电脑局域网 IP、配置 Unity 地址和验证同一 Wi-Fi 的步骤。
 
 ### 8.2 本地联调
 
@@ -526,3 +528,42 @@ SQLite 驱动和具体文件清单在工程创建时锁定；本地数据库及 
 实施前仍需安装 Unity 并确认精确版本，锁定 AR 包、Gin、SQLite 驱动和前端依赖；工程创建后按 README、接口样例和验收场景检查实现是否偏离本文。
 
 当前没有创建三端业务工程，没有创建数据库容器，也没有修改 linkseek 或现有 MySQL 容器。
+
+## 11. 计划 006 架构扩展（2026-10-28 增补）
+
+本节登记计划 006 新增能力的现行架构；前述各节描述的必做闭环架构不变。实施细节与验收以计划文档为准。
+
+### 11.1 账号、会话与授权
+
+新增 `users` 与 `sessions` 两张表，随问题库同库初始化，幂等创建。问题创建人使用独立关联表 `issue_owners` 记录，不改动既有 `issues` 表结构与问题 JSON 契约；旧问题无归属记录，仅管理员可见。
+
+- 密码以 bcrypt 哈希保存；两个演示账号每次启动按环境变量幂等建立或更新。
+- 会话令牌为 32 字节随机值，仅在登录响应与 Cookie/Bearer 头中出现；库中只存 `HMAC-SHA256(SESSION_SECRET, token)` 摘要，泄漏数据库也无法伪造令牌。
+- 浏览器使用 `HttpOnly`、`SameSite=Lax` 会话 Cookie；Unity 使用 `Authorization: Bearer` 头携带同一令牌（规避 UnityWebRequest 对 Cookie 的不可靠持久化）。后端两种方式等价接受。
+- 授权在 HTTP 处理层之前完成：未认证统一 `401 authentication_required`，角色不足统一 `403 permission_denied`；健康检查保持匿名。
+
+### 11.2 实时事件
+
+问题创建与状态修改在事务提交成功后，由后端单进程事件中心向所有管理员 WebSocket 连接广播 `issue.created` / `issue.updated` 事件，正文为完整八字段问题对象加单调递增序号。Go 侧 WebSocket 使用 `github.com/coder/websocket` 库处理帧与生命周期，不自研协议解析。本期单进程、无 Redis；无连接时事件直接丢弃（客户端以全量校准兜底）。
+
+### 11.3 容器拓扑
+
+```mermaid
+flowchart LR
+    Phone["真机 Unity"] -- "HTTP :8080" --> Backend["backend 容器\nGo + SQLite"]
+    Browser["浏览器"] -- "HTTP :5173" --> Web["web 容器\nNginx 静态资源"]
+    Web -- "同源 /api 反向代理" --> Backend
+    Backend -- "SQLite 文件" --> Volume[(命名卷 inspection-data)]
+```
+
+后端镜像为多阶段构建（固定 Go 工具链编译、非 root 运行）；管理端镜像由 Node/pnpm 构建静态产物后交 Nginx 服务，并把同源 `/api` 请求（含 `/api/ws` 升级）代理到后端容器。两个长期服务加一个 SQLite 命名卷，无其他中间件。真实密码与会话密钥经未跟踪的 `compose.local.env` 注入。2026-10-28 已按此拓扑落地验收（arm64 双镜像、健康检查、全新卷初始化、停止/重启数据保留、局域网直连），详见 `docs/evidence/006-feature-completion/docker-验收记录.md`。
+
+### 11.4 目录增补
+
+| 新增路径 | 职责 |
+| --- | --- |
+| `backend/internal/auth/` | 账号、会话、密码哈希与授权中间件 |
+| `backend/internal/httpapi/ws.go` | WebSocket 升级、连接管理与事件广播 |
+| `backend/Dockerfile`、`web/Dockerfile`、`compose.yaml` | 双端生产容器与编排 |
+| `unity/Assets/Scripts/UI/`（扩展） | 登录面板、历史面板、完整诊断开关 |
+| `tools/issue-reporter/`（扩展） | 登录步骤与会话参数 |

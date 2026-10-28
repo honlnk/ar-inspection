@@ -37,3 +37,9 @@ tools/ar-support-check/build/
 unity/.utmp/
 unity/Assets/XR/Temp/
 unity/Assets/XR/Temp.meta
+
+# 计划 006：本地演示环境文件（真实密码/会话密钥，只本地注入，不入库）
+backend/.env
+compose.local.env
+.env
+*.local.env

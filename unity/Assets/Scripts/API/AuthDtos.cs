@@ -10,6 +10,13 @@ namespace Inspection.API
         public string password;
     }
 
+    /// <summary>开发快捷登录请求体 {role}：只传角色，不传也不保存任何密码。</summary>
+    [Serializable]
+    public class QuickLoginRequest
+    {
+        public string role;
+    }
+
     /// <summary>当前用户信息（登录成功与 /api/auth/me 共用）：username / displayName / role。</summary>
     [Serializable]
     public class AuthUserDto

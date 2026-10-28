@@ -55,6 +55,19 @@ export async function logout(signal?: AbortSignal): Promise<void> {
   await authRequest('/api/auth/logout', { method: 'POST' }, signal)
 }
 
+/**
+ * 开发期快捷登录：按角色为内置演示账号签发会话，不传密码。
+ * 仅当后端显式启用 QUICK_LOGIN_ENABLED=1 时可用；生产构建不展示入口。
+ */
+export async function quickLogin(role: 'inspector' | 'admin', signal?: AbortSignal): Promise<CurrentUser> {
+  const data = await authRequest('/api/auth/quick-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  }, signal)
+  return parseCurrentUser(data)
+}
+
 /** 恢复登录状态：有效返回当前用户，无会话/过期抛 401 */
 export async function fetchCurrentUser(signal?: AbortSignal): Promise<CurrentUser> {
   const data = await authRequest('/api/auth/me', { method: 'GET' }, signal)

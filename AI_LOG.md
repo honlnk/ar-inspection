@@ -1445,3 +1445,12 @@
 
 - 采用（新增开发态无密码快捷登录：后端默认关闭的专用接口 + Unity/管理台开发态按钮；未提交、未推送）
 - 验证：在 worktree 内新建 `feat/dev-quick-login` 分支（基于 `feat/history-own-only` 提交 `6537888`）实现。① 后端新增 `POST /api/auth/quick-login`，仅 `QUICK_LOGIN_ENABLED=1` 时注册（默认与未知路径一样 404），请求体严格只接受 `{"role":"inspector"|"admin"}`，只映射内置 inspector/admin、不接收密码字段；`auth.Service.QuickLogin` 复用统一会话签发（`issueSession`），目标账号被删除返回 401 `quick_login_unavailable`；启动时打印启用告警。② Unity `AuthApiClient.QuickLogin` 与登录共用响应解析，404 时提示「请在后端设置 QUICK_LOGIN_ENABLED=1 后重启」；登录页新增「开发快捷登录（巡检员）」按钮，仅 `Debug.isDebugBuild || Application.isEditor` 显示，正式包隐藏；登录卡片高度 1280→1440 以容纳按钮，场景已用 `SceneWiring.Run` 重建。③ React 新增 `quickLogin('admin')` 与登录页按钮，仅 `import.meta.env.DEV` 渲染，生产构建不出现；与常规登录共用忙碌态与错误提示。验证：Go 新增 4 条测试（默认 404、双角色签发且令牌可用 /me、严格校验、账号删除）+ `go vet`/`go test -race ./...` 全绿；React `pnpm typecheck`/`lint`/`test`（92/92）通过；Unity EditMode 77/77、门禁 56/56（新增快捷入口结构与接线两项）；临时后端实测启用时 admin/inspector 均 200、Cookie 令牌可访问 `/api/auth/me`、非法角色 400，禁用时 404 且无启用告警。README、TEST-ACCOUNTS 与 `backend/.env.example`/`compose.local.env.example` 已同步。注：本分支场景由当前分支代码整体重建（大 diff），与主工作树未提交的计划 007 场景改动不同源，合并前建议先提交计划 007 再重建场景；本条目记于主工作树以延续未提交编号。
+
+### Prompt 原文 142
+
+> 把这些修改 合并到主分支吧
+
+### 结果
+
+- 采用（在 `main` 以 `--no-ff` 合并 `feat/dev-quick-login`，现场解决文档与场景冲突并重新验证三端；未推送）
+- 验证：`git merge --no-ff feat/dev-quick-login` 产生 3 处冲突。`web/src/components/LoginPage.tsx` 取计划 007 的令牌样式（`PRIMARY_BUTTON`）并保留快捷登录的导入、状态、`handleQuickLogin` 与 `import.meta.env.DEV` 按钮块，快捷按钮改用 `SECONDARY_BUTTON`；`README.md` 合并双方内容，保留计划 007 的界面与真机说明，补入历史按账号隔离、开发快捷登录章节与 `POST /api/auth/quick-login` 接口行，并将测试数字更新为合并后实际值；`unity/Assets/Scenes/Inspection.unity` 以主分支场景为底（`git checkout --ours`），再用合并后的 `SceneWiring.Run` 加 `-buildTarget Android` 整体重建，登录卡片高度 1440、`QuickLoginButton` 与面板引用均写入场景；`GateVerify.cs`、`SceneWiring.cs`、`HistoryPanelController.cs` 自动合并后逐段复核，计划 007 的界面改动与快捷登录接线互不覆盖，门禁新增的两项检查均能命中重建后的对象。验证：`go vet ./...`、`go test -race ./...` 全绿；`pnpm typecheck`/`lint`/`test` 102/102、`pnpm build` 通过；Unity EditMode 89/89、门禁 66/66（含新增快捷登录入口与接线检查）。场景重建产生整文件重排的大 diff，与既往 `SceneWiring` 重建口径一致（fileID 重新生成），非人工编辑。合并提交未推送，feature worktree 保留。

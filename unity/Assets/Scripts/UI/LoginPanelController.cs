@@ -20,6 +20,7 @@ namespace Inspection.UI
         [SerializeField] private InputField passwordInput;
         [SerializeField] private Button loginButton;
         [SerializeField] private Text loginLabel;
+        [SerializeField] private Button quickLoginButton;
         [SerializeField] private Text noticeText;   // 状态行：恢复中/登录已过期/错误提示
         [SerializeField] private ToastView toast;
 
@@ -27,11 +28,20 @@ namespace Inspection.UI
         public const string RoleAdmin = "admin";
 
         private bool requesting;
+        private bool quickRequesting;
 
         public bool IsOpen => panelRoot != null && panelRoot.activeSelf;
 
+        /// <summary>开发快捷登录入口是否可用：仅编辑器与开发构建显示，正式包隐藏。</summary>
+        public static bool IsQuickLoginAvailable => Application.isEditor || Debug.isDebugBuild;
+
         private void Start()
         {
+            // 开发快捷登录只在编辑器/开发构建出现；正式构建直接隐藏入口（后端默认也不注册路由）
+            if (quickLoginButton != null)
+            {
+                quickLoginButton.gameObject.SetActive(IsQuickLoginAvailable);
+            }
             // 面板在场景里默认激活（阻止未登录进入主界面）；启动即尝试恢复会话
             Show(null);
             if (BackendConfig.GetBaseUrl().Length > 0 && AuthSession.HasToken)
@@ -52,6 +62,7 @@ namespace Inspection.UI
             panelRoot.SetActive(true);
             passwordInput.text = string.Empty;
             requesting = false;
+            quickRequesting = false;
             SetNotice(notice ?? (AuthSession.HasToken ? "请登录巡检员账号" : "请登录巡检员账号"));
             RefreshLoginState();
         }
@@ -88,14 +99,39 @@ namespace Inspection.UI
             }
 
             requesting = true;
+            quickRequesting = false;
             RefreshLoginState();
             SetNotice("登录中…");
             StartCoroutine(apiClient.Login(username, password, OnLoginFinished));
         }
 
+        /// <summary>
+        /// 开发快捷登录（编辑器绑定）：以内置巡检员身份一键登录，不输入密码；
+        /// 后端未启用时提示 QUICK_LOGIN_ENABLED。复用登录成功/失败处理。
+        /// </summary>
+        public void OnQuickLoginClicked()
+        {
+            if (requesting)
+            {
+                return;
+            }
+            if (BackendConfig.GetBaseUrl().Length == 0)
+            {
+                SetNotice("未配置后端地址，请点击下方「设置」先填写");
+                return;
+            }
+
+            requesting = true;
+            quickRequesting = true;
+            RefreshLoginState();
+            SetNotice("快捷登录中…");
+            StartCoroutine(apiClient.QuickLogin(RoleInspector, OnLoginFinished));
+        }
+
         private void OnLoginFinished(LoginResult result)
         {
             requesting = false;
+            quickRequesting = false;
             RefreshLoginState();
             if (!result.Success)
             {
@@ -117,7 +153,7 @@ namespace Inspection.UI
                 return;
             }
 
-            AuthSession.Save(result.Token, result.User.displayName, result.User.role);
+            AuthSession.Save(result.Token, result.User.username, result.User.displayName, result.User.role);
             EnterMain();
         }
 
@@ -125,8 +161,8 @@ namespace Inspection.UI
         {
             if (result.Valid && result.User.role == RoleInspector)
             {
-                // 恢复成功：同步显示名（令牌原样保留，服务端会话仍在有效期内）
-                AuthSession.Save(AuthSession.Token, result.User.displayName, result.User.role);
+                // 恢复成功：同步用户名/显示名（令牌原样保留，服务端会话仍在有效期内）
+                AuthSession.Save(AuthSession.Token, result.User.username, result.User.displayName, result.User.role);
                 EnterMain();
                 return;
             }
@@ -168,7 +204,11 @@ namespace Inspection.UI
             loginButton.interactable = !requesting;
             if (loginLabel != null)
             {
-                loginLabel.text = requesting ? "登录中…" : "登录";
+                loginLabel.text = requesting ? (quickRequesting ? "快捷登录中…" : "登录中…") : "登录";
+            }
+            if (quickLoginButton != null)
+            {
+                quickLoginButton.interactable = !requesting;
             }
         }
     }

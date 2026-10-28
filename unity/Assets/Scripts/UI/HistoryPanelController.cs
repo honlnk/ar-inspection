@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,9 +10,11 @@ namespace Inspection.UI
 {
     /// <summary>
     /// 历史问题列表面板（计划 006 4.6）：只读、按创建时间倒序、进入面板拉取一次 +
-    /// 「刷新」手动更新（无轮询无 WebSocket）。请求期间保留旧列表并显示加载状态；
-    /// 首次失败显示错误（刷新按钮即重试）；刷新失败保留旧数据并提示可能过期；
-    /// 空列表显示「暂无历史上报」；会话过期保留面板与未提交草稿并跳转登录。
+    /// 「刷新」手动更新（无轮询无 WebSocket）。列表由服务端按登录账号过滤，只包含当前
+    /// 巡检员本人的上报；共享设备换账号或退出登录时丢弃旧账号的列表与在途请求。
+    /// 请求期间保留旧列表并显示加载状态；首次失败显示错误（刷新按钮即重试）；
+    /// 刷新失败保留旧数据并提示可能过期；空列表显示「暂无我的上报」；
+    /// 会话过期保留面板与未提交草稿并跳转登录。
     /// 面板打开期间 PlacementController 冻结 AR 放置。
     /// </summary>
     public class HistoryPanelController : MonoBehaviour
@@ -29,18 +32,59 @@ namespace Inspection.UI
 
         private bool loading;
         private bool hasLoadedOnce;
+        private string loadedUsername = string.Empty;
+        private int fetchGeneration;
 
         public bool IsOpen => panelRoot != null && panelRoot.activeSelf;
 
-        /// <summary>打开面板：显示当前账号；未加载过则拉取一次，已有数据先展示旧列表。</summary>
+        /// <summary>打开面板：显示当前账号；账号与上次加载不同则先清空旧列表；未加载过则拉取一次。</summary>
         public void Open()
         {
             panelRoot.SetActive(true);
-            accountText.text = "当前账号：" + (string.IsNullOrEmpty(AuthSession.DisplayName) ? "inspector" : AuthSession.DisplayName);
+            if (IsAccountChanged(loadedUsername, AuthSession.Username))
+            {
+                ClearListForAccountChange();
+            }
+            accountText.text = AccountLine(AuthSession.DisplayName, AuthSession.Username);
             if (!hasLoadedOnce)
             {
                 Fetch(initial: true);
             }
+        }
+
+        /// <summary>
+        /// 面板保持打开时检测账号变化：会话过期期间不处理（保留旧列表，计划 006 4.6）；
+        /// 重新登录为其他巡检员后立即清空旧账号数据并按新账号拉取。
+        /// </summary>
+        private void Update()
+        {
+            if (!IsOpen || !AuthSession.HasToken)
+            {
+                return;
+            }
+            if (!IsAccountChanged(loadedUsername, AuthSession.Username))
+            {
+                return;
+            }
+            ClearListForAccountChange();
+            accountText.text = AccountLine(AuthSession.DisplayName, AuthSession.Username);
+            Fetch(initial: true);
+        }
+
+        /// <summary>纯函数：已加载列表所属账号与当前账号不一致（共享设备换账号）。</summary>
+        public static bool IsAccountChanged(string loadedUsername, string currentUsername)
+        {
+            return !string.IsNullOrEmpty(loadedUsername) &&
+                   !string.Equals(loadedUsername, currentUsername, StringComparison.Ordinal);
+        }
+
+        /// <summary>纯函数：账号行文案，明确本页只显示当前巡检员本人的上报。</summary>
+        public static string AccountLine(string displayName, string username)
+        {
+            var name = !string.IsNullOrEmpty(displayName)
+                ? displayName
+                : (!string.IsNullOrEmpty(username) ? username : "巡检员");
+            return "当前账号：" + name + "（仅显示本人上报）";
         }
 
         /// <summary>关闭按钮（编辑器绑定）：收起面板（AR 放置恢复）。</summary>
@@ -66,8 +110,9 @@ namespace Inspection.UI
 
         private void OnLogoutFinished()
         {
+            // 共享设备：退出即丢弃本账号列表并作废在途请求，避免下一个账号登录后看到残留数据
+            ClearListForAccountChange();
             AuthSession.Clear();
-            hasLoadedOnce = false; // 下次登录后重新拉取（账号可能不同）
             panelRoot.SetActive(false);
             var settings = FindAnyObjectByType<SettingsPanelController>(FindObjectsInactive.Include);
             if (settings != null)
@@ -80,6 +125,8 @@ namespace Inspection.UI
         private void Fetch(bool initial)
         {
             loading = true;
+            var generation = ++fetchGeneration;
+            var requestedUsername = AuthSession.Username;
             refreshButton.interactable = false;
             if (refreshLabel != null)
             {
@@ -87,11 +134,18 @@ namespace Inspection.UI
             }
             // 首次加载旧列表为空；刷新时旧列表保留，仅状态行提示（旧数据不错误清空）
             statusText.text = initial ? "加载中…" : "刷新中…";
-            StartCoroutine(apiClient.FetchHistory(result => OnFetchFinished(initial, result)));
+            StartCoroutine(apiClient.FetchHistory(result =>
+                OnFetchFinished(generation, requestedUsername, initial, result)));
         }
 
-        private void OnFetchFinished(bool initial, HistoryResult result)
+        private void OnFetchFinished(int generation, string requestedUsername, bool initial, HistoryResult result)
         {
+            // 账号已切换或已退出登录：丢弃旧账号的迟到响应，绝不在新账号名下展示旧数据
+            if (generation != fetchGeneration ||
+                !string.Equals(requestedUsername, AuthSession.Username, StringComparison.Ordinal))
+            {
+                return;
+            }
             loading = false;
             refreshButton.interactable = true;
             if (refreshLabel != null)
@@ -115,12 +169,38 @@ namespace Inspection.UI
             }
 
             hasLoadedOnce = true;
+            loadedUsername = AuthSession.Username;
             RebuildList(result.Issues);
-            statusText.text = result.Issues.Length == 0 ? "暂无历史上报" : string.Empty;
+            statusText.text = result.Issues.Length == 0 ? "暂无我的上报" : string.Empty;
         }
 
-        /// <summary>按模板重建列表（旧条目实例销毁重建，模板本身保持隐藏）。</summary>
-        private void RebuildList(IssueDto[] issues)
+        /// <summary>
+        /// 账号变化/退出登录：作废在途请求、清空列表并恢复可刷新状态，
+        /// 保证界面不会在另一个巡检员名下继续展示上一个账号的数据。
+        /// </summary>
+        private void ClearListForAccountChange()
+        {
+            fetchGeneration++;
+            loading = false;
+            hasLoadedOnce = false;
+            loadedUsername = string.Empty;
+            ClearItems();
+            if (refreshButton != null)
+            {
+                refreshButton.interactable = true;
+            }
+            if (refreshLabel != null)
+            {
+                refreshLabel.text = "刷新";
+            }
+            if (statusText != null)
+            {
+                statusText.text = string.Empty;
+            }
+        }
+
+        /// <summary>销毁全部列表条目（模板本身保持隐藏）。</summary>
+        private void ClearItems()
         {
             for (var i = listContent.childCount - 1; i >= 0; i--)
             {
@@ -131,6 +211,12 @@ namespace Inspection.UI
                 }
                 Destroy(child.gameObject);
             }
+        }
+
+        /// <summary>按模板重建列表（旧条目实例销毁重建，模板本身保持隐藏）。</summary>
+        private void RebuildList(IssueDto[] issues)
+        {
+            ClearItems();
 
             foreach (var issue in issues)
             {

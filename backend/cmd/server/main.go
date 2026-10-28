@@ -71,7 +71,15 @@ func run() error {
 	authService.CleanupExpiredSessions(context.Background())
 
 	gin.SetMode(gin.ReleaseMode)
-	router := httpapi.NewRouter(store, authService, splitOrigins(corsOrigins), issue.DefaultFieldGenerator())
+	// 开发快捷登录默认关闭：只有显式设置 QUICK_LOGIN_ENABLED=1 才注册路由，
+	// 避免任何未配置的部署（含 Docker 演示）意外获得免密登录入口。
+	quickLoginEnabled := envBool("QUICK_LOGIN_ENABLED")
+	routerOpts := make([]httpapi.Option, 0, 1)
+	if quickLoginEnabled {
+		routerOpts = append(routerOpts, httpapi.WithQuickLogin(true))
+		log.Printf("开发快捷登录已启用（POST /api/auth/quick-login）：仅限本地开发，请勿在生产环境开启")
+	}
+	router := httpapi.NewRouter(store, authService, splitOrigins(corsOrigins), issue.DefaultFieldGenerator(), routerOpts...)
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           router,
@@ -109,6 +117,16 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBool 解析开发开关：仅明确的真值字符串视为开启，其余（含未设置）一律关闭。
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func splitOrigins(v string) []string {

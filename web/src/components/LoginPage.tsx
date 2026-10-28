@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState } from 'react'
-import { login } from '../api/auth'
+import { login, quickLogin } from '../api/auth'
 import { isRequestCancelled } from '../api/issues'
 import type { CurrentUser } from '../api/auth'
-import { PRIMARY_BUTTON, SURFACE_CARD, TEXT_INPUT } from '../lib/styles'
+import { PRIMARY_BUTTON, SECONDARY_BUTTON, SURFACE_CARD, TEXT_INPUT } from '../lib/styles'
 
 /**
  * 登录页：浅中性底 + 居中窄卡片。用户名、密码、登录按钮纵向排列；
@@ -20,13 +20,15 @@ export function LoginPage({
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [quickSubmitting, setQuickSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const requestRef = useRef<AbortController | null>(null)
+  const busy = submitting || quickSubmitting
 
   const handleSubmit = useCallback(
     (event: React.FormEvent) => {
       event.preventDefault()
-      if (submitting) return
+      if (busy) return
       setError(null)
       if (username.trim() === '' || password === '') {
         setError('请输入用户名和密码')
@@ -46,8 +48,27 @@ export function LoginPage({
           if (!controller.signal.aborted) setSubmitting(false)
         })
     },
-    [username, password, submitting, onLoggedIn],
+    [username, password, busy, onLoggedIn],
   )
+
+  /** 开发期一键登录管理员：不涉及密码；后端未启用时展示后端中文提示 */
+  const handleQuickLogin = useCallback(() => {
+    if (busy) return
+    setError(null)
+    const controller = new AbortController()
+    requestRef.current?.abort()
+    requestRef.current = controller
+    setQuickSubmitting(true)
+    quickLogin('admin', controller.signal)
+      .then(user => onLoggedIn(user))
+      .catch(err => {
+        if (controller.signal.aborted || isRequestCancelled(err)) return
+        setError(err instanceof Error ? err.message : '快捷登录失败，请稍后重试')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setQuickSubmitting(false)
+      })
+  }, [busy, onLoggedIn])
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-canvas px-4 py-10">
@@ -77,7 +98,7 @@ export function LoginPage({
               type="text"
               autoComplete="username"
               value={username}
-              disabled={submitting}
+              disabled={busy}
               onChange={e => setUsername(e.target.value)}
               className={TEXT_INPUT}
               placeholder="admin"
@@ -89,7 +110,7 @@ export function LoginPage({
               type="password"
               autoComplete="current-password"
               value={password}
-              disabled={submitting}
+              disabled={busy}
               onChange={e => setPassword(e.target.value)}
               className={TEXT_INPUT}
               placeholder="请输入密码"
@@ -102,10 +123,21 @@ export function LoginPage({
             </p>
           )}
 
-          <button type="submit" disabled={submitting} className={`${PRIMARY_BUTTON} w-full`}>
+          <button type="submit" disabled={busy} className={`${PRIMARY_BUTTON} w-full`}>
             {submitting ? '登录中…' : '登录'}
           </button>
         </form>
+
+        {import.meta.env.DEV && (
+          <div className="mt-3">
+            <button type="button" onClick={handleQuickLogin} disabled={busy} className={`${SECONDARY_BUTTON} w-full`}>
+              {quickSubmitting ? '快捷登录中…' : '开发快捷登录（admin）'}
+            </button>
+            <p className="mt-1 text-xs leading-5 text-slate-400">
+              仅开发环境显示；后端需设置 QUICK_LOGIN_ENABLED=1。
+            </p>
+          </div>
+        )}
 
         <p className="mt-4 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-400">
           本地演示账号由后端环境配置，不在此页展示密码。巡检员账号请在 Unity 巡检端登录。

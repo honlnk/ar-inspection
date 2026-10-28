@@ -492,7 +492,7 @@ namespace Inspection.EditorTools
                 TextAnchor.MiddleCenter);
             UnityWorkspaceUi.Label(content, "ProductDescription", "巡检员端 · 现场问题上报与处理", 208f, 64f,
                 UiVisualStyle.Secondary, 42, TextAnchor.MiddleCenter);
-            var card = UnityWorkspaceUi.Card(content, "LoginCard", 360f, 1280f);
+            var card = UnityWorkspaceUi.Card(content, "LoginCard", 360f, 1440f);
             UnityWorkspaceUi.Label(card, "CardTitle", "巡检员登录", 44f, 80f, UiVisualStyle.Ink, 52);
             UnityWorkspaceUi.Label(card, "CardHint", "进入园区巡检工作台", 136f, 56f, UiVisualStyle.Secondary, 38);
             UnityWorkspaceUi.Label(card, "UsernameLabel", "用户名", 236f, 56f, UiVisualStyle.Secondary, 38);
@@ -515,9 +515,14 @@ namespace Inspection.EditorTools
             var settingsEntry = UnityWorkspaceUi.Button(card, "SettingsEntry", "后端地址设置", Vector2.zero, Vector2.zero,
                 UiVisualStyle.Surface, UiVisualStyle.Primary);
             UnityWorkspaceUi.Top((RectTransform)settingsEntry.transform, 1072f, 136f);
+            // 开发快捷登录：只申请内置巡检员会话，不涉及密码；正式构建由控制器按
+            // Debug.isDebugBuild 在 Start 中隐藏，后端未启用时按钮会给出明确提示。
+            var quickLogin = UnityWorkspaceUi.Button(card, "QuickLoginButton", "开发快捷登录（巡检员）",
+                Vector2.zero, Vector2.zero, UiVisualStyle.Surface, UiVisualStyle.Primary);
+            UnityWorkspaceUi.Top((RectTransform)quickLogin.transform, 1240f, 136f);
             UnityWorkspaceUi.Label(content, "AccountNotice", "本地演示账号由后端环境配置，登录密码不保存在设备上。",
-                1700f, 112f, UiVisualStyle.Secondary, 36, TextAnchor.MiddleCenter);
-            UnityWorkspaceUi.ScrolledContent(content, 1860f);
+                1880f, 112f, UiVisualStyle.Secondary, 36, TextAnchor.MiddleCenter);
+            UnityWorkspaceUi.ScrolledContent(content, 2020f);
 
             var authClient = parent.gameObject.AddComponent<Inspection.API.AuthApiClient>();
             var controller = parent.gameObject.AddComponent<Inspection.UI.LoginPanelController>();
@@ -527,8 +532,10 @@ namespace Inspection.EditorTools
             UnityWorkspaceUi.SetRef(controller, "passwordInput", passwordInput);
             UnityWorkspaceUi.SetRef(controller, "loginButton", login);
             UnityWorkspaceUi.SetRef(controller, "loginLabel", login.GetComponentInChildren<Text>());
+            UnityWorkspaceUi.SetRef(controller, "quickLoginButton", quickLogin);
             UnityWorkspaceUi.SetRef(controller, "noticeText", notice);
             UnityWorkspaceUi.Click(login, controller.OnLoginClicked);
+            UnityWorkspaceUi.Click(quickLogin, controller.OnQuickLoginClicked);
             UnityWorkspaceUi.Click(settingsEntry, settingsController.Open);
             root.gameObject.SetActive(true);
             return controller;

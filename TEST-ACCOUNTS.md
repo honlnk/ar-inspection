@@ -13,5 +13,6 @@
 - 密码只存在于上述两个本地环境文件中（均被 `.gitignore` 忽略，不入库）；后端启动时从环境变量读取。
 - **账号来源（计划 008 起）**：`admin` 密码每次启动从 `ADMIN_PASSWORD` 同步；`inspector` 密码仅在该数据库**首次启动创建账号时**取自 `INSPECTOR_PASSWORD`，此后与页面设置为准，环境变量不再覆盖——若曾在人员管理页重置过 inspector 密码，以页面设置的新密码登录，本表所列 `INSPECTOR_PASSWORD` 值即首次创建时的初始密码。
 - 额外巡检员账号（如 `zhangsan`）由管理员在网页「人员管理」页创建，密码在创建时设置，不写入任何环境文件；忘记密码由管理员在该页重置（重置后旧会话全部失效）。
+- 开发快捷登录（2026-10-28）：后端设置 `QUICK_LOGIN_ENABLED=1` 后，Unity 开发构建/编辑器登录页与 `pnpm dev` 管理台登录页各显示一键登录按钮，分别直接登录 `inspector` 与 `admin`，无需密码；正式构建不显示，生产部署请保持关闭。
 - 若密码失效（如环境文件被改动），以 `backend/.env` / `compose.local.env` 中的当前值为准，或参照 `backend/.env.example` / `compose.local.env.example` 重新生成。
 - 本文件属本地测试凭证，密码为随机生成的演示值，不用于任何真实环境。

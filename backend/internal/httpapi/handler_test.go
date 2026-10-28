@@ -45,6 +45,12 @@ func newTestRouter(t *testing.T) *testEnv {
 // newTestRouterWithFields 用指定字段生成器构建环境，用于注入 ID/时间生成失败路径。
 func newTestRouterWithFields(t *testing.T, fields issue.FieldGenerator) *testEnv {
 	t.Helper()
+	return newTestRouterWithOptions(t, fields)
+}
+
+// newTestRouterWithOptions 在默认环境基础上附加路由选项（如开发快捷登录）。
+func newTestRouterWithOptions(t *testing.T, fields issue.FieldGenerator, opts ...Option) *testEnv {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	dbPath := filepath.Join(t.TempDir(), "inspection.db")
 	store, err := issue.OpenSQLite(dbPath)
@@ -69,7 +75,7 @@ func newTestRouterWithFields(t *testing.T, fields issue.FieldGenerator) *testEnv
 	if err := authService.EnsureAccounts(ctx, testInspectorPassword, testAdminPassword); err != nil {
 		t.Fatalf("建立测试账号失败: %v", err)
 	}
-	router := NewRouter(store, authService, []string{"http://localhost:5173", "http://127.0.0.1:5173"}, fields)
+	router := NewRouter(store, authService, []string{"http://localhost:5173", "http://127.0.0.1:5173"}, fields, opts...)
 
 	env := &testEnv{Router: router, Store: store, AuthStore: authStore, dbPath: dbPath}
 	env.Inspector = loginForTest(t, router, "inspector", testInspectorPassword)

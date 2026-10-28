@@ -73,9 +73,9 @@ func TestAuth_LoginFailures(t *testing.T) {
 	}
 
 	for name, body := range map[string]string{
-		"未知字段":  `{"username":"admin","password":"x","extra":1}`,
-		"语法错误":  `{"username":`,
-		"类型错误":  `{"username":1,"password":"x"}`,
+		"未知字段":    `{"username":"admin","password":"x","extra":1}`,
+		"语法错误":    `{"username":`,
+		"类型错误":    `{"username":1,"password":"x"}`,
 		"额外 JSON": `{"username":"a","password":"b"}{}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -197,6 +197,151 @@ func TestDataScope(t *testing.T) {
 	}
 	if len(adminList.Data) != 2 {
 		t.Fatalf("管理员应见全部 2 条（含旧数据），实际 %d 条", len(adminList.Data))
+	}
+}
+
+// TestDataScope_TwoInspectorsSeeOnlyOwnIssues 验证多个巡检员账号之间互相不可见：
+// 张三的上报不出现在 inspector 的历史列表，inspector 的上报也不出现在张三列表；
+// 管理员仍见全部。这是 Unity「历史」页按账号隔离的回归防线。
+func TestDataScope_TwoInspectorsSeeOnlyOwnIssues(t *testing.T) {
+	env := newTestRouter(t)
+	mustCreateZhangsan(t, env)
+
+	login := tryLogin(env.Router, "zhangsan", "zhangsan-pw-1")
+	if login.Code != http.StatusOK {
+		t.Fatalf("zhangsan 登录失败: %d %s", login.Code, login.Body.String())
+	}
+	zhangsanToken := extractSessionCookie(login)
+	if zhangsanToken == "" {
+		t.Fatal("zhangsan 登录未设置会话 Cookie")
+	}
+
+	inspectorIssue := createIssueViaHTTP(t, env)
+	zRec := requestWithBearer(env.Router, http.MethodPost, "/api/issues",
+		`{"title":"张三上报","description":"","priority":"low","position":{"x":0,"y":0,"z":0}}`, zhangsanToken)
+	if zRec.Code != http.StatusCreated {
+		t.Fatalf("zhangsan 上报失败: %d %s", zRec.Code, zRec.Body.String())
+	}
+	var zCreated struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(zRec.Body.Bytes(), &zCreated); err != nil {
+		t.Fatalf("解析 zhangsan 创建响应失败: %v", err)
+	}
+
+	inspIDs := listIssueIDsWithToken(t, env, env.Inspector)
+	if len(inspIDs) != 1 || inspIDs[0] != inspectorIssue["id"].(string) {
+		t.Fatalf("inspector 应只见自己的 1 条，实际 %v", inspIDs)
+	}
+	zIDs := listIssueIDsWithToken(t, env, zhangsanToken)
+	if len(zIDs) != 1 || zIDs[0] != zCreated.Data.ID {
+		t.Fatalf("zhangsan 应只见自己的 1 条，实际 %v", zIDs)
+	}
+	if adminIDs := listIssueIDsWithToken(t, env, env.Admin); len(adminIDs) != 2 {
+		t.Fatalf("管理员应见全部 2 条，实际 %v", adminIDs)
+	}
+}
+
+// listIssueIDsWithToken 以指定令牌拉取问题列表并返回 ID 序列。
+func listIssueIDsWithToken(t *testing.T, env *testEnv, token string) []string {
+	t.Helper()
+	rec := requestWithBearer(env.Router, http.MethodGet, "/api/issues", "", token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("列表期望 200，实际 %d %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析列表失败: %v", err)
+	}
+	ids := make([]string, 0, len(resp.Data))
+	for _, it := range resp.Data {
+		ids = append(ids, it.ID)
+	}
+	return ids
+}
+
+// TestQuickLogin_DisabledByDefault 验证默认不注册开发快捷登录路由：
+// 与普通未知路径一致返回 404，未配置的部署不会获得免密入口。
+func TestQuickLogin_DisabledByDefault(t *testing.T) {
+	env := newTestRouter(t)
+	rec := doJSON(env.Router, http.MethodPost, "/api/auth/quick-login", `{"role":"admin"}`)
+	assertErrorEnvelope(t, rec, http.StatusNotFound, "not_found")
+}
+
+// TestQuickLogin_EnabledIssuesSessionForBuiltInAccounts 验证启用后一键签发会话：
+// 两个内置角色均成功、下发 Cookie、令牌可用于 /api/auth/me，且响应不含密码字段。
+func TestQuickLogin_EnabledIssuesSessionForBuiltInAccounts(t *testing.T) {
+	env := newTestRouterWithOptions(t, issue.DefaultFieldGenerator(), WithQuickLogin(true))
+	for _, tc := range []struct{ role, username string }{
+		{"inspector", "inspector"},
+		{"admin", "admin"},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			rec := doJSON(env.Router, http.MethodPost, "/api/auth/quick-login", `{"role":"`+tc.role+`"}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("期望 200，实际 %d %s", rec.Code, rec.Body.String())
+			}
+			var resp struct {
+				Data struct {
+					Username string `json:"username"`
+					Role     string `json:"role"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("解析失败: %v", err)
+			}
+			if resp.Data.Username != tc.username || resp.Data.Role != tc.role {
+				t.Fatalf("账号不符: %+v", resp.Data)
+			}
+			if strings.Contains(strings.ToLower(rec.Body.String()), "password") {
+				t.Fatalf("响应不得出现密码字段: %s", rec.Body.String())
+			}
+			token := extractSessionCookie(rec)
+			if token == "" {
+				t.Fatal("快捷登录应设置会话 Cookie")
+			}
+			if me := requestWithBearer(env.Router, http.MethodGet, "/api/auth/me", "", token); me.Code != http.StatusOK {
+				t.Fatalf("快捷登录令牌应可用，实际 %d %s", me.Code, me.Body.String())
+			}
+		})
+	}
+}
+
+// TestQuickLogin_RejectsInvalidPayload 验证严格解析：未知角色、缺角色、
+// 携带密码字段与语法错误均返回 400 invalid_argument。
+func TestQuickLogin_RejectsInvalidPayload(t *testing.T) {
+	env := newTestRouterWithOptions(t, issue.DefaultFieldGenerator(), WithQuickLogin(true))
+	for name, body := range map[string]string{
+		"未知角色": `{"role":"root"}`,
+		"缺少角色": `{}`,
+		"携带密码": `{"role":"admin","password":"x"}`,
+		"语法错误": `{"role":`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := doJSON(env.Router, http.MethodPost, "/api/auth/quick-login", body)
+			assertErrorEnvelope(t, rec, http.StatusBadRequest, "invalid_argument")
+		})
+	}
+}
+
+// TestQuickLogin_DeletedAccountReturnsUnauthorized 验证内置巡检员被删除后
+// 快捷登录明确失败且不签发新会话，提示改用常规登录。
+func TestQuickLogin_DeletedAccountReturnsUnauthorized(t *testing.T) {
+	env := newTestRouterWithOptions(t, issue.DefaultFieldGenerator(), WithQuickLogin(true))
+	del := doJSONAs(env, auth.RoleAdmin, http.MethodDelete, "/api/users/inspector", "")
+	if del.Code != http.StatusNoContent {
+		t.Fatalf("准备：删除 inspector 失败 %d %s", del.Code, del.Body.String())
+	}
+	rec := doJSON(env.Router, http.MethodPost, "/api/auth/quick-login", `{"role":"inspector"}`)
+	assertErrorEnvelope(t, rec, http.StatusUnauthorized, "quick_login_unavailable")
+	if !strings.Contains(rec.Body.String(), "常规登录") {
+		t.Fatalf("应提示改用常规登录: %s", rec.Body.String())
 	}
 }
 

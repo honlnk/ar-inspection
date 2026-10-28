@@ -3,7 +3,6 @@ import type { ReactNode } from 'react'
 import type { Issue, Status } from '../types/issue'
 import { fetchIssues, isRequestCancelled, updateIssueStatus } from '../api/issues'
 import { isAuthenticationError } from '../api/auth'
-import type { CurrentUser } from '../api/auth'
 import { API_BASE_URL } from '../api/issues'
 import { statusLabel } from '../lib/display'
 import {
@@ -15,7 +14,6 @@ import {
   type RealtimeEvent,
   type RealtimeStatus,
 } from '../lib/realtime'
-import { AdminShell } from './AdminShell'
 import { IssueList } from './IssueList'
 import { IssueFilters } from './IssueFilters'
 import { applyIssueFilters, EMPTY_FILTERS, type IssueFilterValues } from '../lib/filters'
@@ -29,21 +27,26 @@ function errorMessage(error: unknown): string {
 }
 
 export interface IssueBoardProps {
-  user: CurrentUser
-  loggingOut: boolean
-  onLogout: () => void
   /** 会话过期（REST 401）时通知 App 回登录页 */
   onSessionExpired: () => void
+  /**
+   * 计划 008 双入口导航：切到人员管理页时置 true。组件保持挂载
+   * （实时连接、未保存草稿与筛选状态不丢），仅显示/隐藏。
+   */
+  hidden: boolean
+  /** 实时连接状态变化时上抛，由 App 侧外壳徽标展示 */
+  onRealtimeChange?: (status: RealtimeStatus) => void
   /** 测试注入实时客户端工厂；默认按后端地址建立 WebSocket 连接 */
   createRealtimeClient?: (options: RealtimeClientOptions) => RealtimeClient
 }
 
 /**
- * 管理台主体：列表加载、状态保存、实时同步与筛选共享同一份列表状态。
+ * 问题工作台面板：列表加载、状态保存、实时同步与筛选共享同一份列表状态。
  * 实时事件与保存结果通过函数式 setState 串行合并：事件不取消进行中的保存，
  * 保存成功以服务端响应为准；存在草稿的行被远端更新时保留草稿并提示。
+ * 计划 008：外壳（导航/账号/退出）上移至 App，本组件为可切换面板之一。
  */
-export function IssueBoard({ user, loggingOut, onLogout, onSessionExpired, createRealtimeClient }: IssueBoardProps) {
+export function IssueBoard({ onSessionExpired, hidden, onRealtimeChange, createRealtimeClient }: IssueBoardProps) {
   const [issues, setIssues] = useState<Issue[]>([])
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [initialError, setInitialError] = useState<string | null>(null)
@@ -54,7 +57,6 @@ export function IssueBoard({ user, loggingOut, onLogout, onSessionExpired, creat
   const [saveError, setSaveError] = useState<{ id: string; title: string; message: string } | null>(null)
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
   const [remoteUpdatedIds, setRemoteUpdatedIds] = useState<Set<string>>(new Set())
-  const [realtime, setRealtime] = useState<RealtimeStatus>('closed')
   const [filters, setFilters] = useState<IssueFilterValues>(EMPTY_FILTERS)
 
   const requestRef = useRef<AbortController | null>(null)
@@ -229,7 +231,7 @@ export function IssueBoard({ user, loggingOut, onLogout, onSessionExpired, creat
     const callbacks: Pick<RealtimeClientOptions, 'onEvent' | 'onStatus'> = {
       onEvent: applyRealtimeEvent,
       onStatus: status => {
-        setRealtime(status)
+        onRealtimeChange?.(status)
         if (status === 'connected') {
           // 每次连接成功后全量校准并重置序号（覆盖进程重启导致的序号回退）
           lastSeqRef.current = null
@@ -265,7 +267,7 @@ export function IssueBoard({ user, loggingOut, onLogout, onSessionExpired, creat
       clientRef.current = null
     }
     // 工厂为惰性 state（稳定），boardReady/applyRealtimeEvent 决定连接生命周期
-  }, [boardReady, applyRealtimeEvent, createClientFactory])
+  }, [boardReady, applyRealtimeEvent, createClientFactory, onRealtimeChange])
 
   const visibleIssues = useMemo(() => applyIssueFilters(issues, filters), [issues, filters])
   const emptyText =
@@ -311,43 +313,70 @@ export function IssueBoard({ user, loggingOut, onLogout, onSessionExpired, creat
     return null
   }
 
-  return (
-    <AdminShell user={user} realtime={realtime} loggingOut={loggingOut} onLogout={onLogout}>
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold">问题列表</h1>
-            <p className="mt-1 text-sm text-slate-500">查看巡检人员上报的问题并更新处理状态</p>
-          </div>
-          <button
-            type="button"
-            disabled={anyBusy}
-            onClick={handleRefresh}
-            className="rounded-md bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {refreshing ? '刷新中…' : '刷新'}
-          </button>
+  // 计划 008：切到人员管理页时保持挂载、仅隐藏；恢复时工作台状态原样
+  if (hidden) {
+    return (
+      <div className="hidden" aria-hidden="true">
+        {/* 隐藏时保留全部状态（列表/草稿/筛选/实时连接），不卸载组件 */}
+        <div className="space-y-4">
+          <IssueFilters
+            values={filters}
+            visibleCount={issues.length}
+            totalCount={issues.length}
+            disabled
+            onChange={setFilters}
+          />
+          <IssueList
+            issues={visibleIssues}
+            drafts={drafts}
+            state="success"
+            busy
+            savingId={null}
+            remoteUpdatedIds={remoteUpdatedIds}
+            emptyText={emptyText}
+            onDraftChange={handleDraftChange}
+            onSave={issue => void handleSave(issue)}
+          />
         </div>
-        {renderFeedback()}
-        <IssueFilters
-          values={filters}
-          visibleCount={loadState === 'success' ? visibleIssues.length : 0}
-          totalCount={loadState === 'success' ? issues.length : 0}
-          disabled={loadState !== 'success'}
-          onChange={setFilters}
-        />
-        <IssueList
-          issues={visibleIssues}
-          drafts={drafts}
-          state={loadState}
-          busy={anyBusy}
-          savingId={saving?.id ?? null}
-          remoteUpdatedIds={remoteUpdatedIds}
-          emptyText={emptyText}
-          onDraftChange={handleDraftChange}
-          onSave={issue => void handleSave(issue)}
-        />
       </div>
-    </AdminShell>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">问题列表</h1>
+          <p className="mt-1 text-sm text-slate-500">查看巡检人员上报的问题并更新处理状态</p>
+        </div>
+        <button
+          type="button"
+          disabled={anyBusy}
+          onClick={handleRefresh}
+          className="rounded-md bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {refreshing ? '刷新中…' : '刷新'}
+        </button>
+      </div>
+      {renderFeedback()}
+      <IssueFilters
+        values={filters}
+        visibleCount={loadState === 'success' ? visibleIssues.length : 0}
+        totalCount={loadState === 'success' ? issues.length : 0}
+        disabled={loadState !== 'success'}
+        onChange={setFilters}
+      />
+      <IssueList
+        issues={visibleIssues}
+        drafts={drafts}
+        state={loadState}
+        busy={anyBusy}
+        savingId={saving?.id ?? null}
+        remoteUpdatedIds={remoteUpdatedIds}
+        emptyText={emptyText}
+        onDraftChange={handleDraftChange}
+        onSave={issue => void handleSave(issue)}
+      />
+    </div>
   )
 }

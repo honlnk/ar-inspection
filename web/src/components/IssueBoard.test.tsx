@@ -22,8 +22,6 @@ vi.mock('../api/issues', async (importOriginal) => {
 const fetchIssuesMock = vi.mocked(fetchIssues)
 const updateIssueStatusMock = vi.mocked(updateIssueStatus)
 
-const adminUser = { username: 'admin', displayName: '管理员', role: 'admin' as const }
-
 const baseIssue: Issue = {
   id: 'id-1',
   title: '入口墙面破损',
@@ -82,9 +80,7 @@ function renderBoard(extraProps: Partial<Parameters<typeof IssueBoard>[0]> = {})
   const { factory, fake } = createFakeRealtimeFactory()
   const view = render(
     <IssueBoard
-      user={adminUser}
-      loggingOut={false}
-      onLogout={vi.fn()}
+      hidden={false}
       onSessionExpired={vi.fn()}
       createRealtimeClient={factory}
       {...extraProps}

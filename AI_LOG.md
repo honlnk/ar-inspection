@@ -1236,6 +1236,17 @@
 - 修改后采用（开始执行计划 007 Unity 范围，不施工 React；真机验收未通过，中途被用户叫停，不能视为完成）
 - 验证：完成统一浅色界面、登录/历史/设置全屏页、优先级分段按钮、底部提示、安全区与二次确认重置的初步实现；73 项 EditMode 测试通过，部分阶段 49 项场景门禁通过，APK 多次构建成功。但真机先发现字体引用为空，修复后发现安全区外透出 AR 实景，再修安全区结构后登录内容变为空白。运行时诊断为滚动内容高度被 ContentSizeFitter 压为零；尚未完成最终修复和全链路真机复验。React 未改；工作区另有不属于本任务的计划 008 文档及 PRD/架构变更，未处理。全部改动未提交。
 
+补录说明：第 120 条为计划 008 独立 worktree 会话（分支 plan-008-personnel-management，2026-10-28 与主分支计划 007 Unity 会话并行施工）的记录，分支内原编号 119 与主分支第 119 条冲突，合入主分支时顺延为 120；主分支既有条目编号不重排。
+
+### Prompt 原文 120
+
+> 计划没有问题，评审通过，新建一个 worktree 完成这个计划
+
+### 结果
+
+- 采用（按用户指令在独立 worktree 全量施工计划 008：`/Users/honlnk/project/ar-inspection-plan008`，分支 `plan-008-personnel-management`，与主树并行的计划 007 Unity 改动互不干扰；阶段 0～3 全部完成）
+- 验证：阶段 0 基线复跑全绿（Go `-race` 全部包、React typecheck/lint/76 测试/build）；阶段 1 后端——auth 包新增六个管理存储方法与四个服务方法、UNIQUE 冲突码 2067 映射为「用户名已存在」、删除单事务（清归属→清会话→删账号）、EnsureAccounts 语义改造（admin 每次启动环境变量同步，inspector 仅首启创建）、users_handlers.go 四路由（错误码细分 user_not_found/admin_account_protected）、users_test.go 七个测试（权限矩阵、创建校验、会话踢出、删除语义、重启不复活、环境变量不再强制同步），`go clean -testcache && go test -race ./...` 全绿 + 15 步 curl 冒烟全过，提交 `e44767b`；阶段 2 React——`api/users.ts` 四函数、`PersonnelBoard.tsx`（新增表单/行内编辑/两段式删除确认/管理员只读分区/加载空失败态）、AdminShell 双入口（桌面侧栏+窄屏同构）、App 双面板保持挂载切换（实时连接与草稿不丢）、测试新增 13 例（89 全过）+ typecheck/lint/build 全绿，提交 `4550768`；阶段 3 桌面闭环——六步脚本全过（首启双账号展示、页面创建 zhangsan→issue-reporter 即建即登录即上报→管理台实时可见、三视角归属可见性（各自只见自己的问题、admin 全见含归属未知）、改显示名不踢会话、重置密码旧会话立即 401、删除含数据库三表复核、按 PID 重启 zhangsan 不复活），证据七张截图 + 闭环验收记录归档 `docs/evidence/008-personnel-management/`；验收中发现并修复 CORS 预检缺 DELETE（浏览器路径暴露，单测与 curl 不经过预检故未提前发现），复跑后端全部测试全绿。README（版本表、人员管理说明、接口表四行、INSPECTOR_PASSWORD 语义收窄、已完成/已知问题/证据）、TEST-ACCOUNTS.md（账号来源说明）、PRD/架构文档勘误（首启判定语义）、计划施工日志（偏差记录 1～4 + 阶段 3 通过）全部同步。真机新账号登录以 issue-reporter 代验（同一 HTTP 契约），真机实拍列入未验证清单；分支本地提交共三个（`e44767b`/`4550768` + 阶段 3 收尾提交），未推送。
+
 ### Prompt 原文 121
 
 > Run custom command /project_progress.
@@ -1256,3 +1267,12 @@
 
 - 采用（只读盘点计划 007 实际完成范围与当前界面样式，未修改功能代码或计划状态）
 - 验证：对照计划 007、主分支提交 `c55abe1`、现行 `SceneWiring`/`UnityWorkspaceUi`/`UiVisualStyle` 与辅助 UI 脚本，以及 React 现有组件和计划 006 截图。确认 Unity 统一浅色视觉、全屏登录/历史/设置、AR 顶栏与底部动态提示、底部表单、三色优先级分段选择、历史标签、重置迁移与二次确认、安全区/键盘避让及输入防误触均已有实现；登录空白与顶部漏景已修复，提交记录载明门禁 54/54、EditMode 73/73 和登录页真机复核通过。React 尚无计划 007 改动，沿用浅色底、白色侧栏/顶栏/表格和蓝色操作按钮。已指出归档 Unity 截图为空白故障与旧版主界面，不能冒充新版效果；完整新版真机回归和截图仍未验收，表单大圆角等计划视觉细节未由现行构建原语实现。本轮仅追加本记录，未提交。
+
+### Prompt 原文 123
+
+> 将 008 计划的 分支 合并到主分支来
+
+### 结果
+
+- 采用（将分支 `plan-008-personnel-management` 以 `merge --no-ff` 合并入 main，保留完整历史不 squash；独立 worktree `ar-inspection-plan008` 暂保留未动）
+- 验证：合并仅 AI_LOG.md 一处冲突——两侧并行会话均在第 119 号续写（主分支 Unity 会话与 008 worktree 施工记录），按「既有条目不重排」原则将 008 记录顺延为第 120 条并加补录说明；主分支两条未提交记录（/project_progress、计划 007 盘点）先行顺延为 121/122 并以 `cb57d7d` 单独提交。合并后复跑：后端 `go clean -testcache && go vet ./... && go test -race ./...` 全绿（httpapi 含 users 七测试、issue 全过）；前端 `pnpm typecheck`/`lint`（0 警告 0 错误）/`test`（89/89）/`build` 全绿。未推送。

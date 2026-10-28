@@ -5,11 +5,13 @@
 | 账号 | 用户名 | 密码 | 用途 |
 | --- | --- | --- | --- |
 | 巡检员 | `inspector` | `VFCUX38hJSaV` | Unity 巡检端登录、上报问题 |
-| 管理员 | `admin` | `5mgTCm6UkC5p` | 网页管理端登录、处理问题、WebSocket 实时看板 |
+| 管理员 | `admin` | `5mgTCm6UkC5p` | 网页管理端登录、处理问题、人员管理、WebSocket 实时看板 |
 
 说明：
 
 - 会话有效期 12 小时；Unity/命令行工具登录后令牌自动保持，无需反复输入。
 - 密码只存在于上述两个本地环境文件中（均被 `.gitignore` 忽略，不入库）；后端启动时从环境变量读取。
+- **账号来源（计划 008 起）**：`admin` 密码每次启动从 `ADMIN_PASSWORD` 同步；`inspector` 密码仅在该数据库**首次启动创建账号时**取自 `INSPECTOR_PASSWORD`，此后与页面设置为准，环境变量不再覆盖——若曾在人员管理页重置过 inspector 密码，以页面设置的新密码登录，本表所列 `INSPECTOR_PASSWORD` 值即首次创建时的初始密码。
+- 额外巡检员账号（如 `zhangsan`）由管理员在网页「人员管理」页创建，密码在创建时设置，不写入任何环境文件；忘记密码由管理员在该页重置（重置后旧会话全部失效）。
 - 若密码失效（如环境文件被改动），以 `backend/.env` / `compose.local.env` 中的当前值为准，或参照 `backend/.env.example` / `compose.local.env.example` 重新生成。
 - 本文件属本地测试凭证，密码为随机生成的演示值，不用于任何真实环境。

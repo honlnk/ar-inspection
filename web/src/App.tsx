@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CurrentUser } from './api/auth'
 import { fetchCurrentUser, logout } from './api/auth'
 import { isRequestCancelled } from './api/issues'
+import type { RealtimeStatus } from './lib/realtime'
 import { LoginPage } from './components/LoginPage'
+import { AdminShell, type AdminPage } from './components/AdminShell'
 import { IssueBoard } from './components/IssueBoard'
+import { PersonnelBoard } from './components/PersonnelBoard'
 
 /** 会话门控状态：检查中 → 登录页 / 管理台 */
 type SessionPhase = 'checking' | 'login' | 'ready'
@@ -11,12 +14,16 @@ type SessionPhase = 'checking' | 'login' | 'ready'
 /**
  * 应用入口：先恢复会话（GET /api/auth/me），有效且为管理员进入管理台；
  * 巡检员账号在网页端提示角色不适用；会话过期时回到登录页。
+ * 计划 008：管理台为「问题列表 / 人员管理」双入口；外壳与导航状态由本组件持有，
+ * 问题工作台切换时保持挂载（实时连接与草稿不丢），仅显示/隐藏。
  */
 export default function App() {
   const [phase, setPhase] = useState<SessionPhase>('checking')
   const [user, setUser] = useState<CurrentUser | null>(null)
   const [loggingOut, setLoggingOut] = useState(false)
   const [roleNotice, setRoleNotice] = useState<string | null>(null)
+  const [page, setPage] = useState<AdminPage>('issues')
+  const [realtime, setRealtime] = useState<RealtimeStatus>('closed')
   const requestRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
@@ -52,6 +59,8 @@ export default function App() {
     }
     setRoleNotice(null)
     setUser(loggedIn)
+    setPage('issues')
+    setRealtime('closed')
     setPhase('ready')
   }, [])
 
@@ -68,12 +77,14 @@ export default function App() {
         if (controller.signal.aborted) return
         setLoggingOut(false)
         setUser(null)
+        setPage('issues')
         setPhase('login')
       })
   }, [loggingOut])
 
   const handleSessionExpired = useCallback(() => {
     setUser(null)
+    setPage('issues')
     setPhase('login')
   }, [])
 
@@ -99,11 +110,25 @@ export default function App() {
   }
 
   return (
-    <IssueBoard
+    <AdminShell
       user={user}
+      realtime={realtime}
       loggingOut={loggingOut}
       onLogout={handleLogout}
-      onSessionExpired={handleSessionExpired}
-    />
+      page={page}
+      onPageChange={setPage}
+    >
+      {/* 双面板同时挂载：问题工作台切走时保持挂载（实时连接、草稿与筛选不丢） */}
+      <div className={page === 'issues' ? '' : 'hidden'}>
+        <IssueBoard
+          hidden={page !== 'issues'}
+          onSessionExpired={handleSessionExpired}
+          onRealtimeChange={setRealtime}
+        />
+      </div>
+      <div className={page === 'personnel' ? '' : 'hidden'}>
+        <PersonnelBoard onSessionExpired={handleSessionExpired} />
+      </div>
+    </AdminShell>
   )
 }

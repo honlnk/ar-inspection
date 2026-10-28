@@ -33,7 +33,7 @@ docker compose ps                                # 两容器 Healthy 即就绪
 
 ### 方式二：本机直接启动（开发方式）
 
-- **Go 后端**：需要三个环境变量（缺失或会话密钥过短会拒绝启动）：`INSPECTOR_PASSWORD`（仅首次部署创建 inspector 的初始密码，见上文）、`ADMIN_PASSWORD`（每次启动同步到 admin 账号）、`SESSION_SECRET`（≥32 字符，随机 64 位 hex 推荐）。本机启动：`cd backend && set -a && source .env && set +a && go run ./cmd/server`（`.env` 参考 `backend/.env.example`，不入库）。默认监听 `:8080`（`ADDR` 可改），数据库默认 `./data/inspection.db`（`ISSUE_DB_PATH` 可改），跨域白名单默认 `http://localhost:5173,http://127.0.0.1:5173`（`CORS_ORIGINS` 可改）。健康检查：`curl http://localhost:8080/api/health` → `{"data":{"status":"ok"}}`。真机联调时需监听 `0.0.0.0`（默认 `:8080` 即是）。测试与静态检查：`go test ./...`、`go test -race ./...`、`go vet ./...`。
+- **Go 后端**：需要三个环境变量（缺失或会话密钥过短会拒绝启动）：`INSPECTOR_PASSWORD`（仅首次部署创建 inspector 的初始密码，见上文）、`ADMIN_PASSWORD`（每次启动同步到 admin 账号）、`SESSION_SECRET`（≥32 字符，随机 64 位 hex 推荐）。本机启动：`cd backend && set -a && source .env && set +a && go run ./cmd/server`（`.env` 参考 `backend/.env.example`，不入库）。默认监听 `:8080`（`ADDR` 可改），数据库默认 `./data/inspection.db`（`ISSUE_DB_PATH` 可改），跨域白名单默认 `http://localhost:5173,http://127.0.0.1:5173`（`CORS_ORIGINS` 可改）。健康检查：`curl http://localhost:8080/api/health` → `{"data":{"status":"ok"}}`。真机联调时需监听 `0.0.0.0`（默认 `:8080` 即是）。测试与静态检查：`go test ./...`、`go test -race ./...`、`go vet ./...`。本地开发可额外设置 `QUICK_LOGIN_ENABLED=1` 启用免密快捷登录（只对内置 inspector/admin 生效，默认关闭，详见下文「开发快捷登录」）。
 - **React 管理端**：`cd web && pnpm install && pnpm dev`，默认 `http://localhost:5173`（`VITE_API_BASE_URL` 见 `web/.env.example`，默认请求 `http://localhost:8080`；启动后即从后端加载问题列表）。类型检查/静态检查/测试/构建：`pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`。
 - **Unity 上报模拟工具（开发辅助）**：独立 Go 命令行工具 `tools/issue-reporter/`，代替 Unity 客户端以真实 HTTP 上报/查询问题，用于接口联调与回归（坐标为人工输入的模拟坐标，不代表真实 AR 位置）：
 
@@ -56,7 +56,7 @@ docker compose ps                                # 两容器 Healthy 即就绪
   adb install -r unity/Builds/inspection-dev.apk
   ```
 
-  EditMode 测试：`Unity -batchmode -projectPath unity -runTests -testPlatform EditMode -testResults <路径>/results.xml`（当前 65/65：计划 004/005 的契约与 AR 输入链路 + 计划 006 新增鉴权/历史列表/诊断开关/优先级映射；注意 `-runTests` 模式不能带 `-quit`）。真机要求 ARCore 设备与相机授权（可 `adb shell pm grant com.honlnk.arinspection android.permission.CAMERA` 预授权）；开发构建左上角有黄色调试信息条与 `[ARCameraPose]` logcat 输出（仅开发构建存在，且自计划 006 起受「完整诊断」开关控制，默认关闭、设置面板可开）。
+  EditMode 测试：`Unity -batchmode -projectPath unity -runTests -testPlatform EditMode -testResults <路径>/results.xml`（当前分支 77/77：计划 004/005 的契约与 AR 输入链路 + 计划 006 鉴权/历史列表/诊断开关/优先级映射 + 历史按账号隔离与开发快捷登录用例；注意 `-runTests` 模式不能带 `-quit`）。真机要求 ARCore 设备与相机授权（可 `adb shell pm grant com.honlnk.arinspection android.permission.CAMERA` 预授权）；开发构建左上角有黄色调试信息条与 `[ARCameraPose]` logcat 输出（仅开发构建存在，且自计划 006 起受「完整诊断」开关控制，默认关闭、设置面板可开）。
 - **Unity 放置诊断记录（仅开发构建，默认关闭）**：设置面板打开「完整诊断」后，每次成功放置会等待该帧渲染结束，保存同名的 PNG 截图与 JSON 数据。数据包含屏幕尺寸与点击位置、射线命中位置、全部已检平面的边界世界/屏幕坐标、黄色方块与点击位置的屏幕偏差、锚点、相机姿态/投影/内参与会话状态。屏幕坐标以左下角为原点，单位为像素；偏移的 Y 为负表示方块位于触点下方。记录位于应用私有目录，不自动上传、不自动删除，会占用手机存储；截图包含现场实景，导出和分享前需确认环境可披露。开关状态持久化（PlayerPrefs），业务结果提示（成功/失败/超时）不受开关影响。连接手机后可导出到电脑的临时目录：
 
   ```bash
@@ -68,6 +68,17 @@ docker compose ps                                # 两容器 Healthy 即就绪
 - **Unity 阶段门禁自检（SK-01/SK-02 自动验证）**：
   `/Applications/Unity/Hub/Editor/6000.3.27f1/Unity.app/Contents/MacOS/Unity -batchmode -quit -projectPath unity -executeMethod Inspection.EditorTools.GateVerify.Run -logFile unity/Logs/gate-verify.log`
   （或在编辑器菜单「现场巡检 / 阶段门禁自检」查看），逐项输出 PASS/FAIL，任一项失败进程退出码非 0。最近一次结果：44 项全部通过（2026-10-28 计划 006：在计划 005 的 AR 输入链路精确检查基础上，新增三色优先级材质、登录/历史面板结构与接线、渲染层级等检查）。自检不验证 Android 构建后的最终合并 Manifest，该结果不含此项。
+
+### 开发快捷登录（仅本地开发）
+
+两个登录页在开发态各有一个一键登录入口，方便本地联调，不涉及任何密码：
+
+| 客户端 | 入口显示条件 | 一键登录账号 |
+| --- | --- | --- |
+| Unity 巡检端 | 编辑器或开发构建（`Debug.isDebugBuild`）；正式包隐藏 | 内置巡检员 `inspector` |
+| React 管理台 | Vite 开发服务器（`pnpm dev`）；`pnpm build` 生产包不渲染 | 内置管理员 `admin` |
+
+后端默认**不注册**快捷登录路由；本地需要时设置 `QUICK_LOGIN_ENABLED=1` 并重启（`backend/.env` 与 `compose.local.env` 的示例已包含该项）。接口 `POST /api/auth/quick-login` 只接受 `{"role":"inspector"}` 或 `{"role":"admin"}`，只对内置账号签发会话，不接收密码字段；目标账号被删除时返回 401 并提示改用常规登录。后端未启用时按钮会提示「请在后端设置 QUICK_LOGIN_ENABLED=1」。**生产部署请保持关闭或不设置该变量。**
 
 ## Unity 真机如何登录与配置 Go 后端地址
 
@@ -93,6 +104,7 @@ docker compose ps                                # 两容器 Healthy 即就绪
 | --- | --- | --- |
 | `POST /api/auth/login` | 登录（`{username, password}`），成功 Set-Cookie 下发会话 | 匿名 |
 | `POST /api/auth/logout` | 登出，会话立即失效 | 已登录 |
+| `POST /api/auth/quick-login` | 开发期快捷登录（`{role:"inspector"\|"admin"}`，只对内置演示账号签发会话、不校验密码）；默认不注册，仅 `QUICK_LOGIN_ENABLED=1` 时存在 | 匿名（仅开发后端） |
 | `GET /api/auth/me` | 当前会话用户信息（会话恢复用） | 已登录 |
 | `GET /api/health` | 服务与存储可用性检查 | 匿名 |
 | `GET /api/issues` | 问题列表 | inspector（仅自己上报）/ admin（全量，含历史无主数据） |
@@ -165,8 +177,8 @@ curl -X POST http://localhost:8080/api/issues -H 'Authorization: Bearer <令牌>
 - Unity AR 相机姿态与放置偏移修复（2026-10-28 计划 005）：AR Session 同对象补齐唯一 AR 输入管理器、主相机改用 Input System 姿态驱动并按官方绑定手持 AR 设备位置/旋转、初始化与搭建共用同一配置（幂等，副本两轮全量循环验证）；门禁升级为输入链路精确检查，EditMode 31/31（含负例）、门禁 35/35。**真机复验通过**：139 条相机姿态采样无冻结（位置三轴变化 0.46/0.27/0.60 m）、24 组放置标记世界坐标=命中点且屏幕投影与触点偏移 0px、世界锁定与平面对齐正常、UI 防误触/跟随按钮/上报成功与失败回归/地址重启保留全部通过（证据 `docs/evidence/005-unity-camera-pose-fix/verification-report.md`）。
 - 功能完善与三端交付闭环（2026-10-28 计划 006）：① 本地演示账号与真实后端权限（bcrypt 口令、HttpOnly Cookie 会话 + Bearer 双通道、12 小时 TTL、巡检员仅见自己上报/管理员全量/匿名 401/越权 403）；② React WebSocket 实时同步（管理员事件流、单调 seq 去重、断线指数退避重连+静默全量校准，浏览器实测「另一端创建→看板不刷新自动出现」）；③ 管理端三条件筛选（标题关键词+优先级+状态，纯前端过滤，计数与草稿语义保留）；④ Docker Compose 一键启动（arm64 双镜像、同源 `/api`+WS 代理、命名卷持久化、非 root、健康检查，全新卷验收含停止/重启数据保留）；⑤ Unity 登录会话（会话恢复、admin 拒入、过期保草稿跳登录）+ 只读历史列表（按创建时间倒序、北京时间、刷新/退出登录）；⑥ AR 草稿三色优先级（低绿/中橙/高红，共享材质、表单内切换即时重着色且几何/锚点/坐标不变）；⑦ 完整诊断开关（默认关、持久化，门控调试条/网络详细日志/放置截图，业务提示不受影响）。三端闭环（工具代真机上报→React 实时出现→管理员改状态→API 复核→容器重启→再查询）与必做回归（空标题/非法枚举 400、匿名 401、巡检员改状态 403、后端不可用提示不白屏、恢复自动重连）全部通过（证据 `docs/evidence/006-feature-completion/`）。
 - 人员管理功能（2026-10-28 计划 008）：管理员在网页管理台对巡检员账号增删改查。后端 `/api/users` 四接口（仅管理员，错误码细分 user_not_found/admin_account_protected）；初始化语义改造（admin 每次启动按环境变量同步，inspector 仅首启创建，删除账号重启不复活）；重置密码/删除账号同事务清会话（旧令牌立即 401）；删除保留历史问题（归属转未知，仅管理员可见，与既有遗留数据语义一致）。React 新增「人员管理」页（新增表单/行内编辑/两段式删除确认/管理员只读分区）与双入口导航（问题列表、人员管理两面板保持挂载切换，实时连接、草稿与筛选不丢）。六步闭环验收（页面创建→新账号即建即登录即上报→实时可见→三视角归属可见性→改显示名不踢会话→重置密码踢会话→删除含数据库三表复核→重启不复活）全部通过；验收中发现的 CORS 预检缺 DELETE 已修复（证据 `docs/evidence/008-personnel-management/`）。
-
-- 巡检员历史按账号隔离（2026-10-28）：Unity「历史」只展示当前登录巡检员本人的上报。服务端 `GET /api/issues` 对 inspector 按账号过滤、对未知角色失败关闭（403），管理员仍看全量；Unity 登录会话新增用户名持久化，共享设备切换账号或退出登录时清空上一账号的历史列表并作废在途请求，面板显示「当前账号：…（仅显示本人上报）」。新增 Go 双巡检员隔离测试与 3 条 Unity EditMode 用例；实测张三/李四各自只见本人上报、管理员见全部，`go test -race ./...` 全绿、本分支 EditMode 76/76。
+- 巡检员历史按账号隔离（2026-10-28）：Unity「历史」只展示当前登录巡检员本人的上报。服务端 `GET /api/issues` 对 inspector 按账号过滤、对未知角色失败关闭（403），管理员仍看全量；Unity 登录会话新增用户名持久化，共享设备切换账号或退出登录时清空上一账号的历史列表并作废在途请求，面板显示「当前账号：…（仅显示本人上报）」。新增 Go 双巡检员隔离测试与 3 条 Unity EditMode 用例；实测张三/李四各自只见本人上报、管理员见全部，`go test -race ./...` 全绿、该提交 EditMode 76/76。
+- 开发快捷登录（2026-10-28）：Unity 开发构建/编辑器与管理台 Vite 开发态登录页各新增「开发快捷登录」按钮，一键以内置 inspector/admin 登录，不输入也不保存密码。后端新增 `POST /api/auth/quick-login`，默认不注册（`QUICK_LOGIN_ENABLED=1` 才启用），只接受 role 且只对内置账号签发会话，未知角色或携带密码字段 400、目标账号被删除 401；启动时输出启用告警。Unity 按 `Debug.isDebugBuild || Application.isEditor` 显示、管理台按 `import.meta.env.DEV` 显示，正式构建均不渲染；后端未启用时提示「请在后端设置 QUICK_LOGIN_ENABLED=1」。验证：Go 新增 4 条接口测试（默认 404、双角色签发、严格校验、账号删除）且 `-race` 全绿；React 新增 3 条登录页测试（92/92）、typecheck/lint 通过；Unity EditMode 77/77、门禁 56/56；临时后端实测启用 200、禁用 404、快捷令牌可用于 `/api/auth/me`。
 
 **未完成**
 

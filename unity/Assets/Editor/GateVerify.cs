@@ -243,6 +243,13 @@ namespace Inspection.EditorTools
                     Check(loginRoot != null && loginRoot.Find("SafeAreaContent/LoginScroll/Viewport/Content/LoginCard") != null
                         && loginRoot.GetComponent<Inspection.UI.SafeAreaFitter>() != null,
                         "登录为安全区全屏可滚动卡片");
+                    var quickLoginButton = loginRoot != null
+                        ? loginRoot.Find("SafeAreaContent/LoginScroll/Viewport/Content/LoginCard/QuickLoginButton")
+                        : null;
+                    Check(quickLoginButton != null
+                        && quickLoginButton.GetComponent<Button>() != null
+                        && quickLoginButton.Find("Label")?.GetComponent<Text>()?.text == "开发快捷登录（巡检员）",
+                        "登录页含开发快捷登录入口（仅开发构建显示）");
                     var historyRoot = appUi.Find("HistoryPanelRoot");
                     Check(historyRoot != null
                         && historyRoot.Find("SafeAreaContent/Header") != null
@@ -280,6 +287,8 @@ namespace Inspection.EditorTools
                     && so.FindProperty("loginButton").objectReferenceValue != null
                     && so.FindProperty("noticeText").objectReferenceValue != null,
                     "登录面板已接线认证客户端与输入控件");
+                Check(so.FindProperty("quickLoginButton").objectReferenceValue != null,
+                    "登录面板已接线开发快捷登录按钮");
             }
             else
             {

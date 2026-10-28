@@ -184,4 +184,14 @@ public class AuthEditModeTests
         Assert.IsTrue(AuthSession.HasToken);
         Assert.IsFalse(AuthSession.IsInspector, "管理员令牌存在也不得进入巡检主界面");
     }
+
+    // ---------- 开发快捷登录请求体 ----------
+
+    [Test]
+    public void QuickLoginRequest_SerializesRoleWithoutPassword()
+    {
+        var json = UnityEngine.JsonUtility.ToJson(new QuickLoginRequest { role = "inspector" });
+        StringAssert.Contains("\"role\":\"inspector\"", json);
+        StringAssert.DoesNotContain("password", json, "快捷登录请求体不得携带任何口令字段");
+    }
 }

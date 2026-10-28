@@ -266,6 +266,85 @@ func listIssueIDsWithToken(t *testing.T, env *testEnv, token string) []string {
 	return ids
 }
 
+// TestQuickLogin_DisabledByDefault 验证默认不注册开发快捷登录路由：
+// 与普通未知路径一致返回 404，未配置的部署不会获得免密入口。
+func TestQuickLogin_DisabledByDefault(t *testing.T) {
+	env := newTestRouter(t)
+	rec := doJSON(env.Router, http.MethodPost, "/api/auth/quick-login", `{"role":"admin"}`)
+	assertErrorEnvelope(t, rec, http.StatusNotFound, "not_found")
+}
+
+// TestQuickLogin_EnabledIssuesSessionForBuiltInAccounts 验证启用后一键签发会话：
+// 两个内置角色均成功、下发 Cookie、令牌可用于 /api/auth/me，且响应不含密码字段。
+func TestQuickLogin_EnabledIssuesSessionForBuiltInAccounts(t *testing.T) {
+	env := newTestRouterWithOptions(t, issue.DefaultFieldGenerator(), WithQuickLogin(true))
+	for _, tc := range []struct{ role, username string }{
+		{"inspector", "inspector"},
+		{"admin", "admin"},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			rec := doJSON(env.Router, http.MethodPost, "/api/auth/quick-login", `{"role":"`+tc.role+`"}`)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("期望 200，实际 %d %s", rec.Code, rec.Body.String())
+			}
+			var resp struct {
+				Data struct {
+					Username string `json:"username"`
+					Role     string `json:"role"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("解析失败: %v", err)
+			}
+			if resp.Data.Username != tc.username || resp.Data.Role != tc.role {
+				t.Fatalf("账号不符: %+v", resp.Data)
+			}
+			if strings.Contains(strings.ToLower(rec.Body.String()), "password") {
+				t.Fatalf("响应不得出现密码字段: %s", rec.Body.String())
+			}
+			token := extractSessionCookie(rec)
+			if token == "" {
+				t.Fatal("快捷登录应设置会话 Cookie")
+			}
+			if me := requestWithBearer(env.Router, http.MethodGet, "/api/auth/me", "", token); me.Code != http.StatusOK {
+				t.Fatalf("快捷登录令牌应可用，实际 %d %s", me.Code, me.Body.String())
+			}
+		})
+	}
+}
+
+// TestQuickLogin_RejectsInvalidPayload 验证严格解析：未知角色、缺角色、
+// 携带密码字段与语法错误均返回 400 invalid_argument。
+func TestQuickLogin_RejectsInvalidPayload(t *testing.T) {
+	env := newTestRouterWithOptions(t, issue.DefaultFieldGenerator(), WithQuickLogin(true))
+	for name, body := range map[string]string{
+		"未知角色": `{"role":"root"}`,
+		"缺少角色": `{}`,
+		"携带密码": `{"role":"admin","password":"x"}`,
+		"语法错误": `{"role":`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := doJSON(env.Router, http.MethodPost, "/api/auth/quick-login", body)
+			assertErrorEnvelope(t, rec, http.StatusBadRequest, "invalid_argument")
+		})
+	}
+}
+
+// TestQuickLogin_DeletedAccountReturnsUnauthorized 验证内置巡检员被删除后
+// 快捷登录明确失败且不签发新会话，提示改用常规登录。
+func TestQuickLogin_DeletedAccountReturnsUnauthorized(t *testing.T) {
+	env := newTestRouterWithOptions(t, issue.DefaultFieldGenerator(), WithQuickLogin(true))
+	del := doJSONAs(env, auth.RoleAdmin, http.MethodDelete, "/api/users/inspector", "")
+	if del.Code != http.StatusNoContent {
+		t.Fatalf("准备：删除 inspector 失败 %d %s", del.Code, del.Body.String())
+	}
+	rec := doJSON(env.Router, http.MethodPost, "/api/auth/quick-login", `{"role":"inspector"}`)
+	assertErrorEnvelope(t, rec, http.StatusUnauthorized, "quick_login_unavailable")
+	if !strings.Contains(rec.Body.String(), "常规登录") {
+		t.Fatalf("应提示改用常规登录: %s", rec.Body.String())
+	}
+}
+
 // TestSessionPersistenceAcrossRestart 验证后端重启（重开数据库连接）后
 // 未过期会话仍有效；新进程发布的事件序号重新从小值开始（客户端以全量校准兜底）。
 func TestSessionPersistenceAcrossRestart(t *testing.T) {

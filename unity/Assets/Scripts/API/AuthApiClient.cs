@@ -19,6 +19,26 @@ namespace Inspection.API
         /// <summary>发起登录请求，完成后一次性回调（主线程）。</summary>
         public IEnumerator Login(string username, string password, Action<LoginResult> onDone)
         {
+            return Authenticate("/api/auth/login",
+                JsonUtility.ToJson(new LoginRequest { username = username, password = password }),
+                "登录", false, onDone);
+        }
+
+        /// <summary>
+        /// 开发期快捷登录（POST /api/auth/quick-login）：只传角色，不涉及密码；
+        /// 后端未启用 QUICK_LOGIN_ENABLED 时给出明确提示。返回体与登录一致。
+        /// </summary>
+        public IEnumerator QuickLogin(string role, Action<LoginResult> onDone)
+        {
+            return Authenticate("/api/auth/quick-login",
+                JsonUtility.ToJson(new QuickLoginRequest { role = role }),
+                "快捷登录", true, onDone);
+        }
+
+        /// <summary>登录/快捷登录共用的请求与响应处理；任何日志都不输出请求体。</summary>
+        private IEnumerator Authenticate(string path, string json, string stage, bool quickLogin,
+            Action<LoginResult> onDone)
+        {
             var baseUrl = BackendConfig.GetBaseUrl();
             if (baseUrl.Length == 0)
             {
@@ -26,9 +46,8 @@ namespace Inspection.API
                 yield break;
             }
 
-            var url = baseUrl.TrimEnd('/') + "/api/auth/login";
-            var json = JsonUtility.ToJson(new LoginRequest { username = username, password = password });
-            Debug.Log("[AuthApiClient] 登录请求开始");
+            var url = baseUrl.TrimEnd('/') + path;
+            Debug.Log($"[AuthApiClient] {stage}请求开始");
 
             using (var request = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST))
             {
@@ -43,7 +62,12 @@ namespace Inspection.API
                     : null;
                 var token = ExtractSessionToken(GetHeader(request, "SET-COOKIE"));
                 var result = ParseLoginResponse(request.responseCode, request.downloadHandler?.text, transportError, token);
-                Debug.Log($"[AuthApiClient] 登录结束 code={request.responseCode} result={(result.Success ? "成功 role=" + result.User.role : result.ErrorMessage)}");
+                // 路由未注册时后端统一返回 404；对开发快捷登录给出可操作的启用提示
+                if (quickLogin && !result.Success && request.responseCode == 404)
+                {
+                    result = LoginResult.Fail("开发快捷登录未启用：请在后端设置 QUICK_LOGIN_ENABLED=1 后重启");
+                }
+                Debug.Log($"[AuthApiClient] {stage}结束 code={request.responseCode} result={(result.Success ? "成功 role=" + result.User.role : result.ErrorMessage)}");
                 onDone?.Invoke(result);
             }
         }

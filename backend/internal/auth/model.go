@@ -84,6 +84,9 @@ var (
 	ErrAdminProtected = errors.New("管理员账号由环境变量维护，不支持此操作")
 	// ErrUsernameExists 用户名已被占用（含管理员）。
 	ErrUsernameExists = errors.New("用户名已存在")
+	// ErrQuickLoginUnavailable 开发快捷登录的目标演示账号不存在
+	//（例如内置巡检员已被管理员删除），此时只能走常规登录。
+	ErrQuickLoginUnavailable = errors.New("快捷登录账号不存在，请使用常规登录")
 )
 
 // 用户名长度边界与允许字符集（计划 008 第 4.3 节）；仅 URL 安全字符，

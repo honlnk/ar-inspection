@@ -99,6 +99,22 @@ func (s *Service) Login(ctx context.Context, username, password string) (string,
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
 		return "", Public{}, ErrInvalidCredentials
 	}
+	return s.issueSession(ctx, user)
+}
+
+// QuickLogin 为开发期快捷登录签发会话：按用户名查找账号，不校验密码。
+// 仅在 HTTP 层显式启用 QUICK_LOGIN_ENABLED 时才会被调用，且 HTTP 层只允许
+// 内置演示账号 inspector/admin；账号已被删除时返回 ErrQuickLoginUnavailable。
+func (s *Service) QuickLogin(ctx context.Context, username string) (string, Public, error) {
+	user, err := s.store.FindByUsername(ctx, strings.TrimSpace(username))
+	if err != nil {
+		return "", Public{}, ErrQuickLoginUnavailable
+	}
+	return s.issueSession(ctx, user)
+}
+
+// issueSession 为已确认身份的账号签发新会话（常规登录与开发快捷登录共用）。
+func (s *Service) issueSession(ctx context.Context, user User) (string, Public, error) {
 	token, tokenHash, err := NewToken(s.secret)
 	if err != nil {
 		return "", Public{}, err

@@ -17,11 +17,21 @@ const maxRequestBody = 1 << 20
 
 // Handler 持有路由依赖、问题服务端字段生成器、账号服务与实时事件中心。
 type Handler struct {
-	store            issue.Store
-	fields           issue.FieldGenerator
-	auth             *auth.Service
-	hub              *Hub
-	wsOriginPatterns []string
+	store             issue.Store
+	fields            issue.FieldGenerator
+	auth              *auth.Service
+	hub               *Hub
+	wsOriginPatterns  []string
+	quickLoginEnabled bool
+}
+
+// Option 可选的开发期路由配置；不传时保持既有生产行为。
+type Option func(*Handler)
+
+// WithQuickLogin 启用 POST /api/auth/quick-login（默认不注册该路由）。
+// 仅供本地开发：只对内置 inspector/admin 签发会话，不校验密码。
+func WithQuickLogin(enabled bool) Option {
+	return func(h *Handler) { h.quickLoginEnabled = enabled }
 }
 
 // NewRouter 构建 Gin 引擎：统一响应、CORS（含凭据）、健康检查、账号接口、
@@ -32,13 +42,16 @@ type Handler struct {
 //   - PATCH /api/issues/:id/status 仅管理员
 //   - /api/users（GET/POST/PATCH/DELETE） 仅管理员
 //   - GET  /api/ws                仅管理员
-func NewRouter(store issue.Store, authService *auth.Service, corsOrigins []string, fields issue.FieldGenerator) *gin.Engine {
+func NewRouter(store issue.Store, authService *auth.Service, corsOrigins []string, fields issue.FieldGenerator, opts ...Option) *gin.Engine {
 	h := &Handler{
 		store:            store,
 		fields:           fields,
 		auth:             authService,
 		hub:              NewHub(),
 		wsOriginPatterns: originToPatterns(corsOrigins),
+	}
+	for _, opt := range opts {
+		opt(h)
 	}
 
 	engine := gin.New()
@@ -56,6 +69,10 @@ func NewRouter(store issue.Store, authService *auth.Service, corsOrigins []strin
 
 	authGroup := api.Group("/auth")
 	authGroup.POST("/login", h.login)
+	// 开发快捷登录仅在显式启用时注册；未启用时该路径与普通未知路径一致返回 404
+	if h.quickLoginEnabled {
+		authGroup.POST("/quick-login", h.quickLogin)
+	}
 	// logout 不要求有效会话：令牌已过期/已撤销时重复退出幂等成功（目标状态已达成）
 	authGroup.POST("/logout", h.logout)
 	authGroup.GET("/me", h.Authenticate, h.me)

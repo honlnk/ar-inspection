@@ -43,3 +43,7 @@ backend/.env
 compose.local.env
 .env
 *.local.env
+
+# 计划 007：真机/浏览器验收截图只留本地（含现场实景，按用户要求不入库）
+docs/evidence/007-ui-polish/device/
+docs/evidence/007-ui-polish/react/

@@ -1188,3 +1188,32 @@
 
 - 采用（按计划 006 全量自主施工，五个阶段全部完成；未提交，等待授权）
 - 验证：① 后端账号权限与实时——bcrypt 双账号（inspector/admin）、HttpOnly Cookie 会话 + Bearer 双通道、角色收口（匿名 401/巡检员仅见自己上报/越权 403）、`coder/websocket` 事件中心（提交后发布、单调 seq），`go clean -testcache && go test -race ./...` 全绿；② React——登录/会话恢复、WS 实时同步（断线重连+去重+静默校准）、三条件筛选，`pnpm typecheck/lint/test`（76 测试）/`build` 全绿，浏览器实测自动出现与改状态成功；③ Unity——登录面板（会话恢复、admin 拒入、过期保草稿）、只读历史列表、AR 三色优先级（共享材质、切换只换材质不改几何）、完整诊断开关（默认关、持久化、门控调试条/网络详录/放置截图），EditMode 65/65、SceneWiring+GateVerify 门禁 44 项全过、APK 构建成功；④ Docker——arm64 双镜像（Go 非 root + Nginx 同源代理含 WS）、Compose 全新卷验收（健康/登录/创建/停止重启数据保留/局域网/WS 101）；⑤ 三端闭环——独立数据库上「工具代真机上报→React 不刷新自动出现→管理员改已解决→API 复核→容器重启→再查询」全通过，必做回归（空标题/非法枚举 400、巡检员改状态 403、后端不可用中文提示不白屏、恢复自动重连）全过。证据归档 `docs/evidence/006-feature-completion/`（实时看板截图、闭环截图、Docker 验收记录、闭环与回归验收记录）；README 同步双启动/账号/接口权限/已知问题；计划施工日志逐阶段追加（含偏差：coder/websocket 选型、Set-Cookie→Bearer 方案、UnityEventTools 占位参数、PlacementController 文件损坏整写、Docker 镜像 tag 未锁 digest、真机项列入未验证清单）。tools/issue-reporter 同步鉴权改造（登录换 Bearer、失败不回退匿名）并补 8 条会话测试全绿。真机实拍验收与提交/推送待用户执行。
+
+### Prompt 原文 115
+
+> （自定义命令 /project_progress：仔细阅读当前项目文档，分析都有哪些功能正在开发，哪些功能已经有了计划但还没开始）
+
+### 结果
+
+- 采用（执行项目进度分析，只读梳理，不改任何功能代码或既有文档结论）
+- 验证：结论逐项对照计划 006 状态头（施工与桌面验收完成、真机实拍与提交推送待用户）、计划 007 状态头（已确认/待施工，前置条件已满足）、README「未完成/已知问题」清单、任务书第 3/6/7 节与 AI_LOG 第 109～114 条。识别出当前无正在施工项；「已有计划未开始」为计划 007 全部五个阶段（React 与 Unity 界面美化）及计划 007 阶段 3～4 内嵌的交付收尾（真机实拍验收 + 演示视频录制 + 最终提交）；计划 006 新功能真机实拍属「已开发未验收」而非未开始。本轮仅追加本记录，未提交。
+
+补录说明：以下 116～117 号对应计划 006 会话后段（2026-10-28 08:02 ～ 08:14）用户在提交授权与测试账号说明两条指令间发出的原指令，当时因会话上下文压缩漏记；本批按真实时间序补记，编号接续、不重排既有条目（115 号为并行会话 /project_progress 记录，保留不动）。
+
+### Prompt 原文 116
+
+> 按照规则 提交一下 git 吧
+
+### 结果
+
+- 采用（补录，原始时间 2026-10-28 08:02 前后；按仓库提交规范分主题提交计划 006 全部变更，共 7 个提交；未推送）
+- 验证：提交前清理游离编译产物 `tools/issue-reporter/issue-reporter`（go run 遗留的 9.5MB Mach-O 二进制）；`git ls-files | grep -E "\.env|local\.env"` 确认 `backend/.env` 与 `compose.local.env` 未被任何提交跟踪（密码/密钥仅存本地 gitignored 文件）；按仓库风格分主题提交：`a96a7a4` feat(backend) 账号权限与实时事件 → `5ec0b4c` feat(web) 登录会话/WS 实时/三条件筛选 → `4fd5d69` feat(unity) 登录会话/只读历史/AR 三色/完整诊断开关 → `616cbe2` feat(tools) issue-reporter 鉴权适配 → `521a0b0` feat(docker) Compose 一键启动 → `8e9fff8` docs 计划/PRD/架构/README 同步与证据归档 → `75cb624` docs TEST-ACCOUNTS.md。提交信息含中文主题行（计划 006 前缀）+ 正文要点 + 验证行；历史未 squash/rewrite；提交后工作树干净。推送待用户明确授权。
+
+### Prompt 原文 117
+
+> 完成的不错，可以在根目录 创建一个文件，写上 项目测试用的 账号密码，方便后人做测试
+
+### 结果
+
+- 采用（补录，原始时间 2026-10-28 08:13 前后；根目录新增 `TEST-ACCOUNTS.md`，记录两个演示账号用途与密码）
+- 验证：先核对 `backend/.env` 与 `compose.local.env` 两处 `INSPECTOR_PASSWORD`/`ADMIN_PASSWORD` 数值一致（避免文档与任一启动方式不符），再提取真实值写入表格：巡检员 `inspector`（Unity 端上报）、管理员 `admin`（网页管理台），另附使用说明（会话 12 小时有效、密码仅存两处 gitignored 本地环境文件、以本地环境文件当前值为准、随机生成的演示值不得用于真实环境）。临时提取文件 `/tmp/inspect-e2e/pw.txt` 用后即删。随后以 `75cb624` 提交；已向用户说明：演示密码由此进入 Git 历史，本地招聘演示场景可接受，若仓库公开需移除并轮换。

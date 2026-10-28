@@ -8,6 +8,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
 using Unity.XR.CoreUtils;
+using Inspection.UI;
 
 namespace Inspection.EditorTools
 {
@@ -61,6 +62,7 @@ namespace Inspection.EditorTools
                 throw new InvalidOperationException("场景缺少 Canvas，先执行「初始化工程」");
             }
             var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            UnityWorkspaceUi.Font = font;
             BuildAppUi(canvas.transform, font, markerPrefab, markerMaterials);
 
             EditorSceneManager.SaveScene(scene);
@@ -213,7 +215,7 @@ namespace Inspection.EditorTools
             // 层级通过末尾统一排序控制（自下而上）：表单 → 跟随按钮 → 顶部栏 → 调试条 →
             // 历史面板 → 登录面板 → 设置面板（可在登录界面之上配置后端地址）→ Toast
             var toast = BuildToast(appUi.transform, font);
-            var formController = BuildFormPanel(appUi.transform, font, out var titleInput, out var priorityDropdown);
+            var formController = BuildFormPanel(appUi.transform, font, out var titleInput, out var prioritySelector);
             var reportButton = BuildReportButton(appUi.transform, font);
             var settingsController = BuildSettingsPanel(appUi.transform, font);
             var loginController = BuildLoginPanel(appUi.transform, font, settingsController);
@@ -229,8 +231,16 @@ namespace Inspection.EditorTools
             UnityEventTools.AddVoidPersistentListener(
                 ((Component)reportButton).GetComponentInChildren<Button>().onClick, reportButton.OnReportButtonClicked);
             UnityEventTools.AddVoidPersistentListener(titleInput.onValueChanged, formController.OnTitleChanged);
-            // 优先级切换：表单内换优先级立即重着色已放置草稿（计划 006 4.5）
-            UnityEventTools.AddIntPersistentListener(priorityDropdown.onValueChanged, formController.OnPriorityChanged, 0);
+            // 优先级分段按钮变化时只替换草稿材质（几何/锚点/坐标仍由 PlacementController 管理）。
+            UnityEventTools.AddIntPersistentListener(prioritySelector.onValueChanged, formController.OnPriorityChanged, 0);
+            BuildFieldGuide(appUi.transform, font);
+            var formError = appUi.transform.Find("FormPanelRoot/SafeAreaContent/FormCard/KeyboardArea/Viewport/Content/ErrorText");
+            if (formError == null)
+            {
+                throw new InvalidOperationException("表单缺少错误提示区");
+            }
+            SetRef(formController, "errorText", formError.GetComponent<Text>());
+
 
             // 顶部栏：历史入口（计划 006 4.6）
             UnityEventTools.AddVoidPersistentListener(historyButton.onClick, historyController.Open);
@@ -265,12 +275,22 @@ namespace Inspection.EditorTools
             // 调试条接线：标记与按钮诊断信息来源
             SetRef(overlay, "placement", placement);
             SetRef(overlay, "reportButton", reportButton);
+            SetRef(settingsController, "loginPanel", loginController);
+            SetRef(settingsController, "historyPanel", historyController);
+            var authClient = appUi.GetComponent<Inspection.API.AuthApiClient>();
+            SetRef(settingsController, "authClient", authClient);
+            var logoutButton = appUi.transform.Find("SettingsPanelRoot/SafeAreaContent/SettingsCard/Viewport/Content/AccountSection/LogoutButton")?.GetComponent<Button>();
+            if (logoutButton == null)
+            {
+                throw new InvalidOperationException("设置面板缺少退出登录按钮");
+            }
+            UnityEventTools.AddVoidPersistentListener(logoutButton.onClick, settingsController.OnLogoutClicked);
 
             // 最终渲染层级（index 0 在最底层）：全屏面板必须盖住顶部栏与跟随按钮，
             // 设置面板盖住登录面板（登录前也能配置后端地址），Toast 永远最上
             var siblingOrder = new[]
             {
-                "FormPanelRoot", "ReportButtonRoot", "TopBar", "DevDebugOverlay",
+                "FormPanelRoot", "ReportButtonRoot", "TopBar", "FieldGuideRoot", "DevDebugOverlay",
                 "HistoryPanelRoot", "LoginPanelRoot", "SettingsPanelRoot", "ToastRoot",
             };
             for (var i = 0; i < siblingOrder.Length; i++)
@@ -287,379 +307,365 @@ namespace Inspection.EditorTools
         private static Button BuildTopBar(Transform parent, Font font,
             Inspection.UI.SettingsPanelController settingsController)
         {
-            var bar = new GameObject("TopBar", typeof(RectTransform));
-            var barRect = (RectTransform)bar.transform;
-            barRect.SetParent(parent, false);
-            barRect.anchorMin = new Vector2(0f, 1f);
-            barRect.anchorMax = new Vector2(1f, 1f);
-            barRect.pivot = new Vector2(0.5f, 1f);
-            barRect.offsetMin = new Vector2(0f, -120f);
-            barRect.offsetMax = Vector2.zero;
-            var barImage = bar.AddComponent<Image>();
-            barImage.color = TopBarBg;
-            barImage.raycastTarget = true; // 顶部栏区域点击不放置
+            var root = UnityWorkspaceUi.Full(parent, "TopBar", Color.clear, safeArea: true, out var content);
+            var bar = UnityWorkspaceUi.Rect(content, "Bar", Vector2.zero, Vector2.zero);
+            bar.anchorMin = new Vector2(0f, 1f);
+            bar.anchorMax = new Vector2(1f, 1f);
+            bar.pivot = new Vector2(0.5f, 1f);
+            bar.offsetMin = Vector2.zero;
+            bar.offsetMax = Vector2.zero;
+            bar.sizeDelta = new Vector2(0f, 168f);
+            UnityWorkspaceUi.Surface(bar, UiVisualStyle.TopBar);
 
-            var statusGo = new GameObject("BackendStatus", typeof(RectTransform));
-            var statusRect = (RectTransform)statusGo.transform;
-            statusRect.SetParent(barRect, false);
-            statusRect.anchorMin = Vector2.zero;
-            statusRect.anchorMax = Vector2.one;
-            statusRect.offsetMin = new Vector2(24f, 0f);
-            statusRect.offsetMax = new Vector2(-900f, 0f);
-            var statusText = statusGo.AddComponent<Text>();
-            statusText.font = font;
-            statusText.fontSize = 32;
-            statusText.color = TextSub;
-            statusText.alignment = TextAnchor.MiddleLeft;
-            statusText.horizontalOverflow = HorizontalWrapMode.Overflow; // 局域网地址不换行
-            statusText.text = "未配置后端";
-            statusText.raycastTarget = true;
-            SetRef(settingsController, "topBarStatusText", statusText);
+            var status = UnityWorkspaceUi.Text(bar, "BackendStatus", "未配置后端", 36, Color.white);
+            status.rectTransform.anchorMin = Vector2.zero;
+            status.rectTransform.anchorMax = Vector2.one;
+            status.rectTransform.offsetMin = new Vector2(32f, 0f);
+            status.rectTransform.offsetMax = new Vector2(-660f, 0f);
+            status.horizontalOverflow = HorizontalWrapMode.Overflow;
+            UnityWorkspaceUi.SetRef(settingsController, "topBarStatusText", status);
 
-            // 重置 AR 会话（真机攻坚新增）：跟踪漂移产生伪平面后一键重建地图
-            var resetButton = MakeTopBarButton(barRect, "ResetButton", "重置", -775f, CancelBg, font);
-            var session = UnityEngine.Object.FindFirstObjectByType<ARSession>();
-            if (session == null)
-            {
-                throw new InvalidOperationException("场景缺少 ARSession，无法接线重置按钮");
-            }
-            UnityEventTools.AddVoidPersistentListener(resetButton.onClick, session.Reset);
-
-            // 手电开关（用户授权新增）：暗光环境下辅助平面检测
-            var torchButton = MakeTopBarButton(barRect, "TorchButton", "手电 关", -555f, CancelBg, font);
+            var settingsButton = UnityWorkspaceUi.HeaderButton(bar, "SettingsButton", "设置", 120f);
+            UnityWorkspaceUi.Click(settingsButton, settingsController.Open);
+            var torchButton = UnityWorkspaceUi.HeaderButton(bar, "TorchButton", "手电 关", 320f);
             var torch = torchButton.gameObject.AddComponent<Inspection.AR.TorchController>();
-            SetRef(torch, "cameraManager", UnityEngine.Object.FindFirstObjectByType<ARCameraManager>());
-            SetRef(torch, "button", torchButton);
-            SetRef(torch, "label", torchButton.GetComponentInChildren<Text>());
-            UnityEventTools.AddVoidPersistentListener(torchButton.onClick, torch.Toggle);
-
-            // 历史入口（计划 006 4.6）：只读历史问题列表
-            var historyButton = MakeTopBarButton(barRect, "HistoryButton", "历史", -335f, CancelBg, font);
-
-            var settingsButton = MakeTopBarButton(barRect, "SettingsButton", "设置", -115f, CancelBg, font);
-            UnityEventTools.AddVoidPersistentListener(settingsButton.onClick, settingsController.Open);
-            return historyButton;
+            UnityWorkspaceUi.SetRef(torch, "cameraManager", UnityEngine.Object.FindFirstObjectByType<ARCameraManager>());
+            UnityWorkspaceUi.SetRef(torch, "button", torchButton);
+            UnityWorkspaceUi.SetRef(torch, "label", torchButton.GetComponentInChildren<Text>());
+            UnityWorkspaceUi.Click(torchButton, torch.Toggle);
+            return UnityWorkspaceUi.HeaderButton(bar, "HistoryButton", "历史", 520f);
         }
 
-        private static Button MakeTopBarButton(RectTransform bar, string name, string label, float xFromRight,
-            Color bg, Font font)
+        private static void BuildFieldGuide(Transform parent, Font font)
         {
-            var button = MakeButton(bar, name, label, new Vector2(xFromRight, 0f), new Vector2(190f, 84f), bg, font, 38);
-            var rect = (RectTransform)button.transform;
-            rect.anchorMin = rect.anchorMax = new Vector2(1f, 0.5f);
-            rect.anchoredPosition = new Vector2(xFromRight, 0f);
-            return button;
+            var root = UnityWorkspaceUi.Full(parent, "FieldGuideRoot", Color.clear, safeArea: true, out var content);
+            var guide = UnityWorkspaceUi.Rect(content, "Guide", Vector2.zero, Vector2.zero);
+            UnityWorkspaceUi.Bottom(guide, 44f, 108f);
+            UnityWorkspaceUi.Surface(guide, UiVisualStyle.TopBar);
+            var text = UnityWorkspaceUi.Text(guide, "Message", "移动手机扫描，点击蓝色平面放置标记",
+                42, Color.white, TextAnchor.MiddleCenter);
+            UnityWorkspaceUi.StretchPad(text.rectTransform, 16f, 4f);
+            root.gameObject.AddComponent<Inspection.UI.FieldGuideView>().Configure(text);
         }
 
         private static Inspection.UI.ToastView BuildToast(Transform parent, Font font)
         {
-            var root = UIRect(parent, "ToastRoot", new Vector2(0f, -170f), new Vector2(940f, 110f));
-            var rect = (RectTransform)root.transform;
-            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 1f);
-            var bg = root.gameObject.AddComponent<Image>();
-            bg.color = ToastBg;
-            var text = MakeText(root.transform, "Message", font, 40, TextMain, TextAnchor.MiddleCenter);
-            StretchPad(text.rectTransform, 20f, 8f);
-            text.text = string.Empty;
+            var root = UnityWorkspaceUi.Full(parent, "ToastRoot", Color.clear, safeArea: true, out var content);
+            var card = UnityWorkspaceUi.Rect(content, "ToastCard", Vector2.zero, Vector2.zero);
+            card.anchorMin = card.anchorMax = card.pivot = new Vector2(0.5f, 1f);
+            card.anchoredPosition = new Vector2(0f, -196f);
+            card.sizeDelta = new Vector2(960f, 132f);
+            UnityWorkspaceUi.Surface(card, new Color(0.05f, 0.08f, 0.14f, 0.96f));
+            var text = UnityWorkspaceUi.Text(card, "Message", string.Empty, 42, Color.white, TextAnchor.MiddleCenter);
+            UnityWorkspaceUi.StretchPad(text.rectTransform, 24f, 8f);
             var toast = root.gameObject.AddComponent<Inspection.UI.ToastView>();
-            SetRef(toast, "root", root.gameObject);
-            SetRef(toast, "messageText", text);
+            UnityWorkspaceUi.SetRef(toast, "root", root.gameObject);
+            UnityWorkspaceUi.SetRef(toast, "messageText", text);
             root.gameObject.SetActive(false);
             return toast;
         }
 
         private static Inspection.UI.MarkerReportButton BuildReportButton(Transform parent, Font font)
         {
-            var holder = new GameObject("ReportButtonRoot", typeof(RectTransform));
-            Stretch(holder.GetComponent<RectTransform>(), parent);
-            var buttonGo = UIRect(holder.transform, "ReportButton", Vector2.zero, new Vector2(420f, 120f));
-            MakeButtonOn(buttonGo, "上报此标记", AccentBg, font, 44);
+            var holder = UnityWorkspaceUi.Full(parent, "ReportButtonRoot", Color.clear, safeArea: false);
+            var buttonGo = UnityWorkspaceUi.Rect(holder, "ReportButton", Vector2.zero, new Vector2(448f, 144f));
+            UnityWorkspaceUi.ButtonOn(buttonGo, "上报此标记", UiVisualStyle.Primary, Color.white, true);
             var reportButton = holder.gameObject.AddComponent<Inspection.UI.MarkerReportButton>();
-            SetRef(reportButton, "movable", (RectTransform)buttonGo.transform);
+            UnityWorkspaceUi.SetRef(reportButton, "movable", buttonGo);
             holder.gameObject.SetActive(false);
             return reportButton;
         }
 
         private static Inspection.UI.IssueFormController BuildFormPanel(Transform parent, Font font,
-            out InputField titleInput, out Dropdown priorityDropdown)
+            out InputField titleInput, out Inspection.UI.PrioritySelector prioritySelector)
         {
-            var root = new GameObject("FormPanelRoot", typeof(RectTransform));
-            Stretch(root.GetComponent<RectTransform>(), parent);
-            MakeMask(root.transform);
+            var root = UnityWorkspaceUi.Full(parent, "FormPanelRoot", Color.clear, safeArea: true, out var safeArea);
+            UnityWorkspaceUi.Mask(safeArea);
+            var card = UnityWorkspaceUi.Rect(safeArea, "FormCard", Vector2.zero, Vector2.zero);
+            card.anchorMin = Vector2.zero;
+            card.anchorMax = Vector2.one;
+            card.pivot = new Vector2(0.5f, 0f);
+            card.offsetMin = Vector2.zero;
+            card.offsetMax = new Vector2(0f, 1600f);
+            UnityWorkspaceUi.Surface(card, UiVisualStyle.Surface);
+            var scroll = UnityWorkspaceUi.Scroll(card, "KeyboardArea", out var content, keyboardInset: true);
+            scroll.GetComponent<RectTransform>().offsetMin = Vector2.zero;
+            scroll.GetComponent<RectTransform>().offsetMax = Vector2.zero;
 
-            var card = new GameObject("FormCard", typeof(RectTransform));
-            var cardRect = (RectTransform)card.transform;
-            cardRect.SetParent(root.transform, false);
-            cardRect.anchorMin = new Vector2(0f, 0f);
-            cardRect.anchorMax = new Vector2(1f, 0f);
-            cardRect.pivot = new Vector2(0.5f, 0f);
-            cardRect.offsetMin = Vector2.zero;
-            cardRect.offsetMax = new Vector2(0f, 1020f);
-            card.AddComponent<Image>().color = PanelBg;
-
-            MakeLabel(cardRect, font, "标题（必填）", 36, 60, TextSub);
-            titleInput = MakeInput(cardRect, font, "TitleInput", "如：B 区入口墙面裂缝", 112, 92, multiline: false).input;
-
-            MakeLabel(cardRect, font, "描述（可选）", 230, 56, TextSub);
-            var descriptionInput = MakeInput(cardRect, font, "DescInput", "补充位置细节、影响范围等", 298, 188, multiline: true).input;
-
-            MakeLabel(cardRect, font, "优先级", 512, 56, TextSub);
-            priorityDropdown = MakeDropdown(cardRect, font, 580);
-
-            MakeLabel(cardRect, font, "位置（自动带出，只读）", 700, 56, TextSub);
-            var positionText = MakeLabel(cardRect, font, "x 0.000   y 0.000   z 0.000", 768, 80, TextMain);
-
-            var submit = MakeButton(cardRect, "SubmitButton", "提交", new Vector2(-250f, 890f), new Vector2(440f, 96f), AccentBg, font, 44);
-            AnchorTopOfCard(submit.transform, 842);
-            var cancel = MakeButton(cardRect, "CancelButton", "取消", new Vector2(250f, 890f), new Vector2(440f, 96f), CancelBg, font, 44);
-            AnchorTopOfCard(cancel.transform, 842);
-            var submitLabel = submit.GetComponentInChildren<Text>();
+            UnityWorkspaceUi.Label(content, "Header", "上报问题", 28f, 96f, UiVisualStyle.Ink, 58);
+            var cancel = UnityWorkspaceUi.Button(content, "CancelButton", "取消", Vector2.zero, new Vector2(184f, 128f),
+                UiVisualStyle.Surface, UiVisualStyle.Secondary);
+            var cancelRect = (RectTransform)cancel.transform;
+            cancelRect.anchorMin = cancelRect.anchorMax = cancelRect.pivot = new Vector2(1f, 1f);
+            cancelRect.anchoredPosition = new Vector2(-24f, -24f);
+            UnityWorkspaceUi.Label(content, "TitleLabel", "标题（必填）", 152f, 56f, UiVisualStyle.Secondary, 38);
+            titleInput = UnityWorkspaceUi.Input(content, "TitleInput", "如：入口墙面破损", 220f, 128f, multiline: false);
+            UnityWorkspaceUi.Label(content, "DescLabel", "描述（可选）", 384f, 56f, UiVisualStyle.Secondary, 38);
+            var descriptionInput = UnityWorkspaceUi.Input(content, "DescInput", "补充位置细节、影响范围等", 452f, 176f, multiline: true);
+            UnityWorkspaceUi.Label(content, "PriorityLabel", "优先级", 664f, 56f, UiVisualStyle.Secondary, 38);
+            prioritySelector = BuildPrioritySelector(content, 736f);
+            UnityWorkspaceUi.Label(content, "PositionLabel", "位置（自动带出，只读）", 928f, 56f, UiVisualStyle.Secondary, 38);
+            var positionText = UnityWorkspaceUi.Label(content, "PositionText", "x 0.000   y 0.000   z 0.000",
+                996f, 72f, UiVisualStyle.Ink, 40);
+            var errorText = UnityWorkspaceUi.Label(content, "ErrorText", string.Empty, 1104f, 128f, UiVisualStyle.Error, 38);
+            errorText.verticalOverflow = VerticalWrapMode.Overflow;
+            var submit = UnityWorkspaceUi.Button(content, "SubmitButton", "提交", Vector2.zero, Vector2.zero,
+                UiVisualStyle.Primary, Color.white, true);
+            UnityWorkspaceUi.Top((RectTransform)submit.transform, 1248f, 144f);
+            UnityWorkspaceUi.ScrolledContent(content, 1424f);
 
             var apiClient = root.gameObject.AddComponent<Inspection.API.IssueApiClient>();
             var controller = root.gameObject.AddComponent<Inspection.UI.IssueFormController>();
-            SetRef(controller, "panelRoot", root.gameObject);
-            SetRef(controller, "titleInput", titleInput);
-            SetRef(controller, "descriptionInput", descriptionInput);
-            SetRef(controller, "priorityDropdown", priorityDropdown);
-            SetRef(controller, "positionText", positionText);
-            SetRef(controller, "submitButton", submit);
-            SetRef(controller, "submitLabel", submitLabel);
-            UnityEventTools.AddVoidPersistentListener(submit.onClick, controller.OnSubmitClicked);
-            UnityEventTools.AddVoidPersistentListener(cancel.onClick, controller.OnCancelClicked);
-
+            UnityWorkspaceUi.SetRef(controller, "panelRoot", root.gameObject);
+            UnityWorkspaceUi.SetRef(controller, "titleInput", titleInput);
+            UnityWorkspaceUi.SetRef(controller, "descriptionInput", descriptionInput);
+            UnityWorkspaceUi.SetRef(controller, "prioritySelector", prioritySelector);
+            UnityWorkspaceUi.SetRef(controller, "positionText", positionText);
+            UnityWorkspaceUi.SetRef(controller, "submitButton", submit);
+            UnityWorkspaceUi.SetRef(controller, "submitLabel", submit.GetComponentInChildren<Text>());
+            UnityWorkspaceUi.SetRef(controller, "errorText", errorText);
+            UnityWorkspaceUi.Click(submit, controller.OnSubmitClicked);
+            UnityWorkspaceUi.Click(cancel, controller.OnCancelClicked);
             root.gameObject.SetActive(false);
             return controller;
         }
 
-        /// <summary>
-        /// 登录全屏面板（计划 006 4.6）：默认激活（未登录不能进入 AR 主界面），
-        /// 控制器与认证客户端挂在常激活的 AppUI 根上（Start 会做会话恢复）；
-        /// 卡片上的「后端地址设置」入口直接打开设置面板（设置层级在登录之上）。
-        /// </summary>
+        private static Inspection.UI.PrioritySelector BuildPrioritySelector(Transform parent, float y)
+        {
+            var root = UnityWorkspaceUi.Rect(parent, "PrioritySelector", Vector2.zero, Vector2.zero);
+            UnityWorkspaceUi.Top(root, y, 144f);
+            var selector = root.gameObject.AddComponent<Inspection.UI.PrioritySelector>();
+            var buttons = new Button[3];
+            var backgrounds = new Image[3];
+            var labels = new Text[3];
+            for (var i = 0; i < 3; i++)
+            {
+                var color = UiVisualStyle.Priority(Inspection.API.IssueContract.PriorityValues[i]);
+                var button = UnityWorkspaceUi.Button(root, "Priority_" + i, string.Empty, Vector2.zero, Vector2.zero,
+                    UiVisualStyle.Surface, color);
+                var rect = (RectTransform)button.transform;
+                rect.anchorMin = new Vector2(i / 3f, 0f);
+                rect.anchorMax = new Vector2((i + 1) / 3f, 1f);
+                rect.offsetMin = new Vector2(i == 0 ? 0f : 8f, 0f);
+                rect.offsetMax = new Vector2(i == 2 ? 0f : -8f, 0f);
+                buttons[i] = button;
+                backgrounds[i] = button.GetComponent<Image>();
+                labels[i] = button.GetComponentInChildren<Text>();
+                UnityWorkspaceUi.SelectPriority(button, selector, i);
+            }
+            selector.SetValueWithoutNotify(0);
+            SetRef(selector, "buttons", buttons);
+            SetRef(selector, "backgrounds", backgrounds);
+            SetRef(selector, "labels", labels);
+            return selector;
+        }
+
+        /// <summary>全屏登录页：浅中性底、白色登录卡片，软键盘弹起时可滚动到错误与登录按钮。</summary>
         private static Inspection.UI.LoginPanelController BuildLoginPanel(Transform parent, Font font,
             Inspection.UI.SettingsPanelController settingsController)
         {
-            var root = new GameObject("LoginPanelRoot", typeof(RectTransform));
-            Stretch(root.GetComponent<RectTransform>(), parent);
-            var bg = root.AddComponent<Image>();
-            bg.color = SolidBg; // 不透明：未登录完全遮挡 AR 主界面
-            bg.raycastTarget = true;
+            var root = UnityWorkspaceUi.Full(parent, "LoginPanelRoot", UiVisualStyle.Page, safeArea: true,
+                out var safeArea);
+            var scroll = UnityWorkspaceUi.Scroll(safeArea, "LoginScroll", out var content, keyboardInset: true);
+            UnityWorkspaceUi.Label(content, "ProductName", "现场巡检问题标注", 100f, 92f, UiVisualStyle.Ink, 64,
+                TextAnchor.MiddleCenter);
+            UnityWorkspaceUi.Label(content, "ProductDescription", "巡检员端 · 现场问题上报与处理", 208f, 64f,
+                UiVisualStyle.Secondary, 42, TextAnchor.MiddleCenter);
+            var card = UnityWorkspaceUi.Card(content, "LoginCard", 360f, 1280f);
+            UnityWorkspaceUi.Label(card, "CardTitle", "巡检员登录", 44f, 80f, UiVisualStyle.Ink, 52);
+            UnityWorkspaceUi.Label(card, "CardHint", "进入园区巡检工作台", 136f, 56f, UiVisualStyle.Secondary, 38);
+            UnityWorkspaceUi.Label(card, "UsernameLabel", "用户名", 236f, 56f, UiVisualStyle.Secondary, 38);
+            var usernameInput = UnityWorkspaceUi.Input(card, "UsernameInput", "请输入巡检员账号", 300f, 128f, false);
+            UnityWorkspaceUi.Label(card, "PasswordLabel", "密码", 464f, 56f, UiVisualStyle.Secondary, 38);
+            var passwordInput = UnityWorkspaceUi.Input(card, "PasswordInput", "请输入账号密码", 528f, 128f, false,
+                password: true);
+            var noticeBackground = UnityWorkspaceUi.Rect(card, "NoticeBackground", Vector2.zero, Vector2.zero);
+            UnityWorkspaceUi.Top(noticeBackground, 708f, 144f);
+            UnityWorkspaceUi.Surface(noticeBackground, UiVisualStyle.Tint(UiVisualStyle.Secondary), false);
+            var notice = UnityWorkspaceUi.Text(noticeBackground, "NoticeText", "请登录巡检员账号", 38,
+                UiVisualStyle.Secondary, TextAnchor.MiddleCenter);
+            UnityWorkspaceUi.StretchPad(notice.rectTransform, 16f, 4f);
+            var feedback = card.gameObject.AddComponent<Inspection.UI.LoginFeedbackView>();
+            feedback.Configure(notice, noticeBackground.GetComponent<Image>());
+            var login = UnityWorkspaceUi.Button(card, "LoginButton", "登录", Vector2.zero, Vector2.zero,
+                UiVisualStyle.Primary, Color.white, true);
+            UnityWorkspaceUi.Top((RectTransform)login.transform, 896f, 144f);
+            var settingsEntry = UnityWorkspaceUi.Button(card, "SettingsEntry", "后端地址设置", Vector2.zero, Vector2.zero,
+                UiVisualStyle.Surface, UiVisualStyle.Primary);
+            UnityWorkspaceUi.Top((RectTransform)settingsEntry.transform, 1072f, 136f);
+            UnityWorkspaceUi.Label(content, "AccountNotice", "本地演示账号由后端环境配置，登录密码不保存在设备上。",
+                1700f, 112f, UiVisualStyle.Secondary, 36, TextAnchor.MiddleCenter);
+            UnityWorkspaceUi.ScrolledContent(content, 1860f);
 
-            var card = UIRect(root.transform, "LoginCard", Vector2.zero, new Vector2(900f, 1080f));
-            var cardRect = (RectTransform)card.transform;
-            cardRect.anchorMin = cardRect.anchorMax = cardRect.pivot = new Vector2(0.5f, 0.5f);
-            card.AddComponent<Image>().color = PanelBg;
-
-            var title = MakeLabel(cardRect, font, "现场巡检问题标注", 60, 80, TextMain);
-            title.fontSize = 52;
-            title.alignment = TextAnchor.MiddleCenter;
-            var subtitle = MakeLabel(cardRect, font, "巡检端 · 请使用巡检员账号登录", 150, 56, TextSub);
-            subtitle.alignment = TextAnchor.MiddleCenter;
-
-            MakeLabel(cardRect, font, "用户名", 230, 52, TextSub);
-            var usernameInput = MakeInput(cardRect, font, "UsernameInput", "inspector", 300, 92, multiline: false).input;
-            MakeLabel(cardRect, font, "密码", 430, 52, TextSub);
-            var passwordInput = MakeInput(cardRect, font, "PasswordInput", "巡检员账号密码", 500, 92, multiline: false).input;
-            passwordInput.contentType = InputField.ContentType.Password;
-
-            var notice = MakeLabel(cardRect, font, "请登录巡检员账号", 630, 120, TextWarning);
-            notice.alignment = TextAnchor.MiddleCenter;
-            notice.fontSize = 36;
-
-            var login = MakeButton(cardRect, "LoginButton", "登录", new Vector2(0f, 790f), new Vector2(920f, 96f), AccentBg, font, 44);
-            AnchorTopOfCard(login.transform, 790);
-            var loginLabel = login.GetComponentInChildren<Text>();
-            var settingsEntry = MakeButton(cardRect, "SettingsEntry", "后端地址设置", new Vector2(0f, 950f), new Vector2(420f, 84f), CancelBg, font, 38);
-            AnchorTopOfCard(settingsEntry.transform, 950);
-
-            // 控制器与认证客户端挂在常激活的 AppUI 根上：面板本体默认激活（挡住主界面），
-            // Start 的会话恢复逻辑必须随场景启动执行
             var authClient = parent.gameObject.AddComponent<Inspection.API.AuthApiClient>();
             var controller = parent.gameObject.AddComponent<Inspection.UI.LoginPanelController>();
-            SetRef(controller, "panelRoot", root.gameObject);
-            SetRef(controller, "apiClient", authClient);
-            SetRef(controller, "usernameInput", usernameInput);
-            SetRef(controller, "passwordInput", passwordInput);
-            SetRef(controller, "loginButton", login);
-            SetRef(controller, "loginLabel", loginLabel);
-            SetRef(controller, "noticeText", notice);
-            UnityEventTools.AddVoidPersistentListener(login.onClick, controller.OnLoginClicked);
-            UnityEventTools.AddVoidPersistentListener(settingsEntry.onClick, settingsController.Open);
+            UnityWorkspaceUi.SetRef(controller, "panelRoot", root.gameObject);
+            UnityWorkspaceUi.SetRef(controller, "apiClient", authClient);
+            UnityWorkspaceUi.SetRef(controller, "usernameInput", usernameInput);
+            UnityWorkspaceUi.SetRef(controller, "passwordInput", passwordInput);
+            UnityWorkspaceUi.SetRef(controller, "loginButton", login);
+            UnityWorkspaceUi.SetRef(controller, "loginLabel", login.GetComponentInChildren<Text>());
+            UnityWorkspaceUi.SetRef(controller, "noticeText", notice);
+            UnityWorkspaceUi.Click(login, controller.OnLoginClicked);
+            UnityWorkspaceUi.Click(settingsEntry, settingsController.Open);
             root.gameObject.SetActive(true);
             return controller;
         }
 
-        /// <summary>历史问题列表面板（计划 006 4.6）：全屏只读列表 + 头部（账号/刷新/退出/关闭）。</summary>
+        /// <summary>历史改为全屏工作台；卡片使用独立的优先级与状态文字标签。</summary>
         private static Inspection.UI.HistoryPanelController BuildHistoryPanel(Transform parent, Font font,
             Inspection.UI.LoginPanelController loginPanel)
         {
-            var root = new GameObject("HistoryPanelRoot", typeof(RectTransform));
-            Stretch(root.GetComponent<RectTransform>(), parent);
-            var bg = root.AddComponent<Image>();
-            bg.color = SolidBg;
-            bg.raycastTarget = true;
+            var root = UnityWorkspaceUi.Full(parent, "HistoryPanelRoot", UiVisualStyle.Page, safeArea: true,
+                out var safeArea);
+            var header = UnityWorkspaceUi.Rect(safeArea, "Header", Vector2.zero, Vector2.zero);
+            header.anchorMin = new Vector2(0f, 1f);
+            header.anchorMax = new Vector2(1f, 1f);
+            header.pivot = new Vector2(0.5f, 1f);
+            header.offsetMin = Vector2.zero;
+            header.offsetMax = Vector2.zero;
+            header.sizeDelta = new Vector2(0f, 280f);
+            UnityWorkspaceUi.Surface(header, UiVisualStyle.Surface);
+            UnityWorkspaceUi.Label(header, "Title", "历史上报", 32f, 76f, UiVisualStyle.Ink, 58);
+            var accountText = UnityWorkspaceUi.Label(header, "AccountText", "当前账号：", 116f, 60f,
+                UiVisualStyle.Secondary, 38);
+            var statusText = UnityWorkspaceUi.Label(header, "StatusText", string.Empty, 184f, 76f,
+                UiVisualStyle.Secondary, 38);
+            var close = UnityWorkspaceUi.Button(header, "CloseButton", "返回", Vector2.zero, new Vector2(152f, 128f),
+                UiVisualStyle.Surface, UiVisualStyle.Primary);
+            var closeRect = (RectTransform)close.transform;
+            closeRect.anchorMin = closeRect.anchorMax = new Vector2(1f, 1f);
+            closeRect.anchoredPosition = new Vector2(-104f, -80f);
+            var refresh = UnityWorkspaceUi.Button(header, "RefreshButton", "刷新", Vector2.zero, new Vector2(176f, 128f),
+                UiVisualStyle.Primary, Color.white, true);
+            var refreshRect = (RectTransform)refresh.transform;
+            refreshRect.anchorMin = refreshRect.anchorMax = new Vector2(1f, 1f);
+            refreshRect.anchoredPosition = new Vector2(-296f, -80f);
+            var logout = UnityWorkspaceUi.Button(header, "LogoutButton", "退出登录", Vector2.zero, new Vector2(240f, 128f),
+                UiVisualStyle.Surface, UiVisualStyle.Error);
+            var logoutRect = (RectTransform)logout.transform;
+            logoutRect.anchorMin = logoutRect.anchorMax = new Vector2(1f, 1f);
+            logoutRect.anchoredPosition = new Vector2(-152f, -200f);
 
-            // 头部：标题/账号 + 刷新/退出/关闭 + 状态行
-            var header = new GameObject("Header", typeof(RectTransform));
-            var headerRect = (RectTransform)header.transform;
-            headerRect.SetParent(root.transform, false);
-            headerRect.anchorMin = new Vector2(0f, 1f);
-            headerRect.anchorMax = new Vector2(1f, 1f);
-            headerRect.pivot = new Vector2(0.5f, 1f);
-            headerRect.offsetMin = new Vector2(0f, -360f);
-            headerRect.offsetMax = Vector2.zero;
-            header.AddComponent<Image>().color = PanelBg;
-
-            var title = MakeLabel(headerRect, font, "历史上报", 40, 80, TextMain);
-            title.fontSize = 52;
-            var accountText = MakeLabel(headerRect, font, "当前账号：", 140, 60, TextSub);
-            var statusText = MakeLabel(headerRect, font, string.Empty, 230, 96, TextWarning);
-            statusText.fontSize = 36;
-
-            var refresh = MakeButton(headerRect, "RefreshButton", "刷新", new Vector2(-560f, 150f), new Vector2(300f, 88f), AccentBg, font, 40);
-            AnchorTopOfCard(refresh.transform, 110);
-            var refreshLabel = refresh.GetComponentInChildren<Text>();
-            var logout = MakeButton(headerRect, "LogoutButton", "退出登录", new Vector2(-230f, 150f), new Vector2(300f, 88f), CancelBg, font, 40);
-            AnchorTopOfCard(logout.transform, 110);
-            var close = MakeButton(headerRect, "CloseButton", "关闭", new Vector2(370f, 60f), new Vector2(240f, 88f), CancelBg, font, 40);
-            AnchorTopOfCard(close.transform, 40);
-
-            // 滚动列表：头部以下整屏
-            var scrollGo = new GameObject("ScrollView", typeof(RectTransform));
-            var scrollRect = (RectTransform)scrollGo.transform;
-            scrollRect.SetParent(root.transform, false);
-            scrollRect.anchorMin = Vector2.zero;
-            scrollRect.anchorMax = Vector2.one;
+            var scroll = UnityWorkspaceUi.Scroll(safeArea, "ScrollView", out var content);
+            var scrollRect = scroll.GetComponent<RectTransform>();
             scrollRect.offsetMin = Vector2.zero;
-            scrollRect.offsetMax = new Vector2(0f, -360f);
-            var scroll = scrollGo.AddComponent<ScrollRect>();
-            scroll.horizontal = false;
-            scroll.vertical = true;
-            scroll.scrollSensitivity = 40f;
-
-            var viewport = new GameObject("Viewport", typeof(RectTransform));
-            var viewportRect = (RectTransform)viewport.transform;
-            viewportRect.SetParent(scrollRect, false);
-            Stretch(viewportRect, scrollRect);
-            viewport.AddComponent<RectMask2D>();
-
-            var content = new GameObject("Content", typeof(RectTransform));
-            var contentRect = (RectTransform)content.transform;
-            contentRect.SetParent(viewportRect, false);
-            contentRect.anchorMin = new Vector2(0f, 1f);
-            contentRect.anchorMax = new Vector2(1f, 1f);
-            contentRect.pivot = new Vector2(0.5f, 1f);
-            contentRect.anchoredPosition = Vector2.zero;
-            contentRect.sizeDelta = new Vector2(0f, 0f);
-            var layout = content.AddComponent<VerticalLayoutGroup>();
-            layout.padding = new RectOffset(24, 24, 24, 24);
-            layout.spacing = 20f;
+            scrollRect.offsetMax = new Vector2(0f, -280f);
+            var layout = content.gameObject.AddComponent<VerticalLayoutGroup>();
+            layout.padding = new RectOffset(48, 48, 36, 48);
+            layout.spacing = 24f;
             layout.childAlignment = TextAnchor.UpperCenter;
-            layout.childControlWidth = false;
+            layout.childControlWidth = true;
             layout.childControlHeight = false;
-            layout.childForceExpandWidth = false;
+            layout.childForceExpandWidth = true;
             layout.childForceExpandHeight = false;
-            content.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            scroll.viewport = viewportRect;
-            scroll.content = contentRect;
-            scroll.verticalNormalizedPosition = 1f;
-
-            var template = BuildHistoryItemTemplate(contentRect, font);
+            var template = BuildHistoryItemTemplate(content, font);
 
             var historyClient = parent.gameObject.AddComponent<Inspection.API.HistoryApiClient>();
             var authClient = parent.gameObject.GetComponent<Inspection.API.AuthApiClient>();
             var controller = parent.gameObject.AddComponent<Inspection.UI.HistoryPanelController>();
-            SetRef(controller, "panelRoot", root.gameObject);
-            SetRef(controller, "apiClient", historyClient);
-            SetRef(controller, "authClient", authClient);
-            SetRef(controller, "loginPanel", loginPanel);
-            SetRef(controller, "accountText", accountText);
-            SetRef(controller, "refreshButton", refresh);
-            SetRef(controller, "refreshLabel", refreshLabel);
-            SetRef(controller, "statusText", statusText);
-            SetRef(controller, "listContent", contentRect);
-            SetRef(controller, "itemTemplate", template);
-            UnityEventTools.AddVoidPersistentListener(refresh.onClick, controller.OnRefreshClicked);
-            UnityEventTools.AddVoidPersistentListener(logout.onClick, controller.OnLogoutClicked);
-            UnityEventTools.AddVoidPersistentListener(close.onClick, controller.OnCloseClicked);
-
+            UnityWorkspaceUi.SetRef(controller, "panelRoot", root.gameObject);
+            UnityWorkspaceUi.SetRef(controller, "apiClient", historyClient);
+            UnityWorkspaceUi.SetRef(controller, "authClient", authClient);
+            UnityWorkspaceUi.SetRef(controller, "loginPanel", loginPanel);
+            UnityWorkspaceUi.SetRef(controller, "accountText", accountText);
+            UnityWorkspaceUi.SetRef(controller, "refreshButton", refresh);
+            UnityWorkspaceUi.SetRef(controller, "refreshLabel", refresh.GetComponentInChildren<Text>());
+            UnityWorkspaceUi.SetRef(controller, "statusText", statusText);
+            UnityWorkspaceUi.SetRef(controller, "listContent", content);
+            UnityWorkspaceUi.SetRef(controller, "itemTemplate", template);
+            UnityWorkspaceUi.Click(refresh, controller.OnRefreshClicked);
+            UnityWorkspaceUi.Click(logout, controller.OnLogoutClicked);
+            UnityWorkspaceUi.Click(close, controller.OnCloseClicked);
             root.gameObject.SetActive(false);
             return controller;
         }
 
-        /// <summary>历史条目模板（固定高度卡片：标题 / 优先级+状态 / 描述 / 坐标 / 时间）。</summary>
         private static GameObject BuildHistoryItemTemplate(RectTransform content, Font font)
         {
-            var item = new GameObject("HistoryItemTemplate", typeof(RectTransform));
-            var rect = (RectTransform)item.transform;
-            rect.SetParent(content, false);
-            rect.anchorMin = new Vector2(0f, 1f);
-            rect.anchorMax = new Vector2(1f, 1f);
-            rect.pivot = new Vector2(0.5f, 1f);
-            rect.sizeDelta = new Vector2(0f, 380f);
-            var bg = item.AddComponent<Image>();
-            bg.color = InputBg;
-
-            var titleText = MakeLabel(rect, font, "标题", 16, 60, TextMain);
-            titleText.fontSize = 42;
-            var metaText = MakeLabel(rect, font, "优先级 · 状态", 92, 52, TextSub);
-            metaText.fontSize = 36;
-            var descText = MakeLabel(rect, font, "描述", 158, 96, TextSub);
-            descText.fontSize = 34;
-            var positionText = MakeLabel(rect, font, "x 0.000   y 0.000   z 0.000", 268, 48, TextSub);
-            positionText.fontSize = 32;
-            var timeText = MakeLabel(rect, font, "创建 · 更新", 324, 48, TextSub);
-            timeText.fontSize = 32;
-
-            item.SetActive(false);
-            return item;
+            var item = UnityWorkspaceUi.Rect(content, "HistoryItemTemplate", Vector2.zero, Vector2.zero);
+            item.sizeDelta = new Vector2(0f, 420f);
+            item.gameObject.AddComponent<LayoutElement>().preferredHeight = 420f;
+            UnityWorkspaceUi.Surface(item, UiVisualStyle.Surface);
+            UnityWorkspaceUi.Label(item, "TitleText", "标题", 28f, 72f, UiVisualStyle.Ink, 48);
+            var priorityTag = UnityWorkspaceUi.Rect(item, "PriorityTag", Vector2.zero, Vector2.zero);
+            UnityWorkspaceUi.Top(priorityTag, 124f, 72f);
+            priorityTag.offsetMax = new Vector2(-420f, 0f);
+            UnityWorkspaceUi.Surface(priorityTag, UiVisualStyle.Tint(UiVisualStyle.Medium), false);
+            var priorityText = UnityWorkspaceUi.Text(priorityTag, "PriorityText", "优先级 中", 38,
+                UiVisualStyle.Medium);
+            UnityWorkspaceUi.StretchPad(priorityText.rectTransform, 16f, 0f);
+            priorityTag.gameObject.AddComponent<Inspection.UI.HistoryTagView>().Configure(priorityText, true);
+            var statusTag = UnityWorkspaceUi.Rect(item, "StatusTag", Vector2.zero, Vector2.zero);
+            UnityWorkspaceUi.Top(statusTag, 124f, 72f);
+            statusTag.offsetMin = new Vector2(432f, 0f);
+            UnityWorkspaceUi.Surface(statusTag, UiVisualStyle.Tint(UiVisualStyle.Open), false);
+            var statusText = UnityWorkspaceUi.Text(statusTag, "StatusText", "待处理", 38, UiVisualStyle.Open);
+            UnityWorkspaceUi.StretchPad(statusText.rectTransform, 16f, 0f);
+            statusTag.gameObject.AddComponent<Inspection.UI.HistoryTagView>().Configure(statusText, false);
+            UnityWorkspaceUi.Label(item, "DescText", "描述", 220f, 72f, UiVisualStyle.Secondary, 40);
+            UnityWorkspaceUi.Label(item, "PositionText", "x 0.000   y 0.000   z 0.000", 304f, 48f,
+                UiVisualStyle.Secondary, 36);
+            UnityWorkspaceUi.Label(item, "TimeText", "创建 · 更新", 360f, 48f, UiVisualStyle.Secondary, 36);
+            item.gameObject.SetActive(false);
+            return item.gameObject;
         }
 
+        /// <summary>设置全屏页：后端地址、账号、诊断与 AR 会话四区；危险操作保留文字二次确认。</summary>
         private static Inspection.UI.SettingsPanelController BuildSettingsPanel(Transform parent, Font font)
         {
-            var root = new GameObject("SettingsPanelRoot", typeof(RectTransform));
-            Stretch(root.GetComponent<RectTransform>(), parent);
-            MakeMask(root.transform);
+            var root = UnityWorkspaceUi.Full(parent, "SettingsPanelRoot", UiVisualStyle.Page, safeArea: true,
+                out var safeArea);
+            var scroll = UnityWorkspaceUi.Scroll(safeArea, "SettingsCard", out var content, keyboardInset: true);
+            UnityWorkspaceUi.Label(content, "Title", "设置", 36f, 88f, UiVisualStyle.Ink, 58);
+            var close = UnityWorkspaceUi.Button(content, "CloseButton", "返回", Vector2.zero, new Vector2(160f, 128f),
+                UiVisualStyle.Surface, UiVisualStyle.Primary);
+            var closeRect = (RectTransform)close.transform;
+            closeRect.anchorMin = closeRect.anchorMax = new Vector2(1f, 1f);
+            closeRect.anchoredPosition = new Vector2(-96f, -52f);
 
-            var card = UIRect(root.transform, "SettingsCard", Vector2.zero, new Vector2(900f, 800f));
-            var cardRect = (RectTransform)card.transform;
-            cardRect.anchorMin = cardRect.anchorMax = cardRect.pivot = new Vector2(0.5f, 0.5f);
-            card.AddComponent<Image>().color = PanelBg;
+            var backend = UnityWorkspaceUi.Section(content, "BackendSection", "后端地址", 172f, 504f);
+            var addressInput = UnityWorkspaceUi.Input(backend, "AddressInput", "http://192.168.31.17:8080",
+                116f, 128f, false);
+            UnityWorkspaceUi.Label(backend, "Hint", "填写电脑后端的局域网地址，手机与电脑需同一 Wi-Fi。",
+                268f, 96f, UiVisualStyle.Secondary, 38);
+            var save = UnityWorkspaceUi.Button(backend, "SaveButton", "保存地址", Vector2.zero, Vector2.zero,
+                UiVisualStyle.Primary, Color.white, true);
+            UnityWorkspaceUi.Top((RectTransform)save.transform, 384f, 128f);
 
-            var title = MakeLabel(cardRect, font, "设置", 50, 70, TextMain);
-            title.fontSize = 52;
-            title.alignment = TextAnchor.MiddleCenter;
-            var addressInput = MakeInput(cardRect, font, "AddressInput", "http://192.168.31.17:8080", 150, 100, multiline: false).input;
+            var account = UnityWorkspaceUi.Section(content, "AccountSection", "账号", 708f, 240f);
+            UnityWorkspaceUi.Label(account, "Description", "巡检员账号仅保存在当前会话中，不保存密码。",
+                108f, 88f, UiVisualStyle.Secondary, 38);
+            var logout = UnityWorkspaceUi.Button(account, "LogoutButton", "退出登录", Vector2.zero, new Vector2(280f, 128f),
+                UiVisualStyle.Surface, UiVisualStyle.Error);
+            var logoutRect = (RectTransform)logout.transform;
+            logoutRect.anchorMin = logoutRect.anchorMax = new Vector2(1f, 0.5f);
+            logoutRect.anchoredPosition = new Vector2(-176f, -32f);
 
-            var hint = MakeLabel(cardRect, font,
-                "后端地址：填写电脑上运行后端服务的局域网地址（手机与电脑需同一 Wi-Fi）；保存后立即生效。",
-                290, 120, TextSub);
-            hint.alignment = TextAnchor.UpperLeft;
-            hint.fontSize = 34;
+            var diagnostics = UnityWorkspaceUi.Section(content, "DiagnosticsSection", "诊断", 980f, 448f);
+            var toggle = UnityWorkspaceUi.Toggle(diagnostics, "FullDiagnosticsToggle", "完整诊断（仅排错时开启）", 108f, 136f);
+            UnityWorkspaceUi.Label(diagnostics, "Hint",
+                "开启后显示屏幕调试信息，记录详细设备日志；放置诊断包含实景截图与坐标。默认关闭，重启保留设置。",
+                268f, 136f, UiVisualStyle.Secondary, 38);
 
-            // 完整诊断开关（计划 006 4.8）：默认关闭、持久化、即时生效
-            var toggle = MakeToggle(cardRect, font, "FullDiagnosticsToggle", "完整诊断（仅排错时开启）", 430);
-            var diagHint = MakeLabel(cardRect, font,
-                "开启后会记录设备日志；放置诊断包含实景截图与坐标。默认关闭，重启保留开关状态。",
-                540, 130, TextSub);
-            diagHint.alignment = TextAnchor.UpperLeft;
-            diagHint.fontSize = 32;
+            var ar = UnityWorkspaceUi.Section(content, "ArSection", "AR 会话", 1460f, 364f);
+            UnityWorkspaceUi.Label(ar, "Description", "跟踪或落点异常时重建地图；当前草稿会被清除，需二次确认。",
+                108f, 88f, UiVisualStyle.Secondary, 38);
+            var reset = UnityWorkspaceUi.Button(ar, "ResetButton", "重置 AR 会话", Vector2.zero, Vector2.zero,
+                UiVisualStyle.Surface, UiVisualStyle.Error);
+            UnityWorkspaceUi.Top((RectTransform)reset.transform, 216f, 144f);
+            var resetController = reset.gameObject.AddComponent<Inspection.UI.SessionResetButton>();
+            resetController.Configure(reset.GetComponentInChildren<Text>());
+            UnityWorkspaceUi.Click(reset, resetController.ConfirmOrReset);
+            UnityWorkspaceUi.ScrolledContent(content, 1900f);
 
-            var save = MakeButton(cardRect, "SaveButton", "保存", new Vector2(-230f, 660f), new Vector2(420f, 96f), AccentBg, font, 44);
-            AnchorTopOfCard(save.transform, 660);
-            var close = MakeButton(cardRect, "CloseButton", "关闭", new Vector2(230f, 660f), new Vector2(420f, 96f), CancelBg, font, 44);
-            AnchorTopOfCard(close.transform, 660);
-
-            // 控制器挂在常激活的 AppUI 根上：挂在默认不激活的面板物体上 Start 永不执行（首启引导会失效）
             var controller = parent.gameObject.AddComponent<Inspection.UI.SettingsPanelController>();
-            SetRef(controller, "panelRoot", root.gameObject);
-            SetRef(controller, "addressInput", addressInput);
-            SetRef(controller, "fullDiagnosticsToggle", toggle);
-            UnityEventTools.AddVoidPersistentListener(save.onClick, controller.OnSaveClicked);
-            UnityEventTools.AddVoidPersistentListener(close.onClick, controller.OnCloseClicked);
+            UnityWorkspaceUi.SetRef(controller, "panelRoot", root.gameObject);
+            UnityWorkspaceUi.SetRef(controller, "addressInput", addressInput);
+            UnityWorkspaceUi.SetRef(controller, "fullDiagnosticsToggle", toggle);
+            UnityWorkspaceUi.Click(save, controller.OnSaveClicked);
+            UnityWorkspaceUi.Click(close, controller.OnCloseClicked);
             UnityEventTools.AddBoolPersistentListener(toggle.onValueChanged, controller.OnFullDiagnosticsToggled, false);
-
             root.gameObject.SetActive(false);
             return controller;
         }
@@ -906,10 +912,11 @@ namespace Inspection.EditorTools
         {
             var so = new SerializedObject(component);
             var prop = so.FindProperty(field);
-            if (prop == null || !prop.isArray || prop.arraySize != values.Length)
+            if (prop == null || !prop.isArray)
             {
-                throw new InvalidOperationException($"{component.GetType().Name} 缺少数组序列化字段 {field} 或长度不匹配");
+                throw new InvalidOperationException($"{component.GetType().Name} 缺少数组序列化字段 {field}");
             }
+            prop.arraySize = values.Length;
             for (var i = 0; i < values.Length; i++)
             {
                 prop.GetArrayElementAtIndex(i).objectReferenceValue = values[i];

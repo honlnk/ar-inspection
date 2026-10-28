@@ -16,6 +16,9 @@ namespace Inspection.UI
         [SerializeField] private InputField addressInput;
         [SerializeField] private Text topBarStatusText;
         [SerializeField] private Toggle fullDiagnosticsToggle;
+        [SerializeField] private LoginPanelController loginPanel;
+        [SerializeField] private HistoryPanelController historyPanel;
+        [SerializeField] private AuthApiClient authClient;
 
         public bool IsOpen => panelRoot != null && panelRoot.activeSelf;
 
@@ -53,6 +56,12 @@ namespace Inspection.UI
         public void OnCloseClicked()
         {
             panelRoot.SetActive(false);
+        }
+
+        /// <summary>账号区退出登录，沿用历史页的撤销会话与草稿保留语义。</summary>
+        public void OnLogoutClicked()
+        {
+            historyPanel?.OnLogoutClicked();
         }
 
         /// <summary>完整诊断开关回调（编辑器绑定，持久化监听的参数只是占位值）：

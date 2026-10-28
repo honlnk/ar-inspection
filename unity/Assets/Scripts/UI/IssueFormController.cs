@@ -18,26 +18,22 @@ namespace Inspection.UI
         [SerializeField] private LoginPanelController loginPanel;
         [SerializeField] private InputField titleInput;
         [SerializeField] private InputField descriptionInput;
-        [SerializeField] private Dropdown priorityDropdown;
+        [SerializeField] private PrioritySelector prioritySelector;
         [SerializeField] private Text positionText;
         [SerializeField] private Button submitButton;
         [SerializeField] private Text submitLabel;
+        [SerializeField] private Text errorText;
 
         /// <summary>下拉选项「中 / 低 / 高」对应的后端枚举值（默认 index 0 = medium，计划 4.3）。</summary>
-        internal static readonly string[] PriorityValues =
-        {
-            IssueContract.PriorityMedium,
-            IssueContract.PriorityLow,
-            IssueContract.PriorityHigh,
-        };
+        internal static readonly string[] PriorityValues = IssueContract.PriorityValues;
 
         private bool submitting;
 
         public bool IsOpen => panelRoot != null && panelRoot.activeSelf;
 
-        /// <summary>当前优先级下拉索引（钳制到合法范围）；放置时按它选标记材质（计划 006 4.5）。</summary>
+        /// <summary>当前优先级分段选择索引；0=medium / 1=low / 2=high。</summary>
         public int CurrentPriorityIndex =>
-            priorityDropdown != null ? Mathf.Clamp(priorityDropdown.value, 0, PriorityValues.Length - 1) : 0;
+            prioritySelector != null ? prioritySelector.Value : 0;
 
         /// <summary>
         /// 打开表单：位置只读行取草稿标记锚定坐标；输入内容保持上次状态（失败重试不丢输入）。
@@ -59,7 +55,8 @@ namespace Inspection.UI
             submitting = false;
             titleInput.text = string.Empty;
             descriptionInput.text = string.Empty;
-            priorityDropdown.value = 0;
+            prioritySelector.SetValueWithoutNotify(0);
+            SetError(string.Empty);
             RefreshSubmitState();
         }
 
@@ -97,7 +94,7 @@ namespace Inspection.UI
             {
                 title = titleInput.text.Trim(),
                 description = descriptionInput.text.Trim(),
-                priority = PriorityValues[Mathf.Clamp(priorityDropdown.value, 0, PriorityValues.Length - 1)],
+                priority = PriorityValues[CurrentPriorityIndex],
                 // 坐标与表单展示一致保留 3 位小数（四舍五入），避免 float 精度噪音进后端
                 position = new IssuePosition
                 {
@@ -107,6 +104,7 @@ namespace Inspection.UI
                 },
             };
             submitting = true;
+            SetError(string.Empty);
             RefreshSubmitState();
             StartCoroutine(apiClient.CreateIssue(body, OnCreateFinished));
         }
@@ -137,9 +135,18 @@ namespace Inspection.UI
                 loginPanel?.ShowForSessionExpired();
                 return;
             }
-            // 失败：优先展示后端中文错误；标记与表单全部保留可原样重试；提示常驻不自动消失
+            // 失败：错误紧邻提交按钮展示；顶部 Toast 保留原反馈，表单与标记原样保留。
+            SetError(result.ErrorMessage);
             toast.Show(result.ErrorMessage);
             RefreshSubmitState();
+        }
+
+        private void SetError(string message)
+        {
+            if (errorText != null)
+            {
+                errorText.text = message ?? string.Empty;
+            }
         }
 
         private bool TitleIsValid()

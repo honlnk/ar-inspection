@@ -62,6 +62,42 @@ namespace Inspection.EditorTools
             }
         }
 
+        /// <summary>
+        /// 全屏面板的 panelRoot 必须指向 Full() 的根节点，而不是 SafeAreaContent：
+        /// 面板关闭走 panelRoot.SetActive(false)，指到内容层时外层容器不会关闭，
+        /// 仍激活的全屏背景会盖住更下层的面板（表现为登录页只剩背景色、控件全不可见）。
+        /// </summary>
+        private static void CheckPanelRootsOnBackgroundRoot(Transform appUi)
+        {
+            var panels = new[]
+            {
+                (Root: "LoginPanelRoot", Controller: typeof(Inspection.UI.LoginPanelController)),
+                (Root: "HistoryPanelRoot", Controller: typeof(Inspection.UI.HistoryPanelController)),
+                (Root: "SettingsPanelRoot", Controller: typeof(Inspection.UI.SettingsPanelController)),
+                (Root: "FormPanelRoot", Controller: typeof(Inspection.UI.IssueFormController)),
+            };
+
+            foreach (var panel in panels)
+            {
+                var expected = appUi.Find(panel.Root);
+                var controller = UnityEngine.Object.FindFirstObjectByType(panel.Controller, FindObjectsInactive.Include)
+                    as Component;
+                if (expected == null || controller == null)
+                {
+                    Check(false, $"面板 {panel.Root} 与其控制器存在，可校验显隐目标");
+                    continue;
+                }
+
+                var so = new SerializedObject(controller);
+                var target = so.FindProperty("panelRoot")?.objectReferenceValue as GameObject;
+                // 根节点必须直接挂在 AppUI 下（全屏容器），且自身带 SafeAreaFitter 的兄弟内容层
+                Check(target == expected.gameObject
+                    && expected.parent == appUi
+                    && expected.Find("SafeAreaContent") != null,
+                    $"面板 {panel.Root} 的显隐目标为全屏根节点（非 SafeAreaContent 内容层）");
+            }
+        }
+
         private static void VerifyScene()
         {
             const string scenePath = "Assets/Scenes/Inspection.unity";
@@ -195,24 +231,27 @@ namespace Inspection.EditorTools
                 if (appUi != null)
                 {
                     var formRoot = appUi.Find("FormPanelRoot");
-                    Check(formRoot != null && formRoot.Find("Mask") != null && formRoot.Find("FormCard") != null,
+                    Check(formRoot != null && formRoot.Find("SafeAreaContent/Mask") != null
+                        && formRoot.Find("SafeAreaContent/FormCard") != null,
                         "表单面板含全屏蒙层与底部卡片");
                     var settingsRoot = appUi.Find("SettingsPanelRoot");
-                    Check(settingsRoot != null && settingsRoot.Find("Mask") != null && settingsRoot.Find("SettingsCard") != null,
-                        "设置面板含全屏蒙层与居中弹窗");
+                    Check(settingsRoot != null && settingsRoot.Find("SafeAreaContent/SettingsCard/Viewport/Content/ArSection/ResetButton") != null,
+                        "设置面板为全屏滚动页且 AR 重置入口位于 AR 会话区");
 
                     // 计划 006：登录全屏面板与历史列表面板
                     var loginRoot = appUi.Find("LoginPanelRoot");
-                    Check(loginRoot != null && loginRoot.Find("LoginCard") != null,
-                        "登录全屏面板存在且含登录卡片");
+                    Check(loginRoot != null && loginRoot.Find("SafeAreaContent/LoginScroll/Viewport/Content/LoginCard") != null
+                        && loginRoot.GetComponent<Inspection.UI.SafeAreaFitter>() != null,
+                        "登录为安全区全屏可滚动卡片");
                     var historyRoot = appUi.Find("HistoryPanelRoot");
                     Check(historyRoot != null
-                        && historyRoot.Find("Header") != null
-                        && historyRoot.Find("ScrollView/Viewport/Content/HistoryItemTemplate") != null,
+                        && historyRoot.Find("SafeAreaContent/Header") != null
+                        && historyRoot.Find("SafeAreaContent/ScrollView/Viewport/Content/HistoryItemTemplate/PriorityTag/PriorityText") != null
+                        && historyRoot.Find("SafeAreaContent/ScrollView/Viewport/Content/HistoryItemTemplate/StatusTag/StatusText") != null,
                         "历史面板存在且含头部与条目模板");
 
                     // 层级顺序：设置在登录之上（登录前可配置后端），Toast 最上
-                    var order = new[] { "FormPanelRoot", "ReportButtonRoot", "TopBar", "DevDebugOverlay",
+                    var order = new[] { "FormPanelRoot", "ReportButtonRoot", "TopBar", "FieldGuideRoot", "DevDebugOverlay",
                         "HistoryPanelRoot", "LoginPanelRoot", "SettingsPanelRoot", "ToastRoot" };
                     var orderOk = appUi.childCount == order.Length;
                     if (orderOk)
@@ -223,6 +262,10 @@ namespace Inspection.EditorTools
                         }
                     }
                     Check(orderOk, "AppUI 渲染层级正确（全屏面板盖住主界面，设置盖住登录，Toast 最上）");
+
+                    // 面板显隐必须落在带背景的根节点上：content 是 SafeAreaContent 子节点，
+                    // 若接线到它，关闭面板只关内容、外层不透明背景仍会盖住下层（登录页整屏空白）。
+                    CheckPanelRootsOnBackgroundRoot(appUi);
                 }
             }
 
@@ -263,9 +306,33 @@ namespace Inspection.EditorTools
             if (settingsPanel != null)
             {
                 var so = new SerializedObject(settingsPanel);
-                Check(so.FindProperty("fullDiagnosticsToggle").objectReferenceValue != null,
+                Check(settingsPanel != null && so.FindProperty("fullDiagnosticsToggle").objectReferenceValue != null,
                     "设置面板已接线「完整诊断」开关（计划 006 4.8）");
             }
+
+            var root = UnityEngine.Object.FindFirstObjectByType<Canvas>()?.transform.Find("AppUI");
+            if (root == null)
+            {
+                return;
+            }
+            Check(root.GetComponentsInChildren<Text>(true).All(text => text.font != null),
+                "所有 UI 文字均持有有效字体引用（防止真机空文字）");
+            Check(root.Find("TopBar/SafeAreaContent/Bar/ResetButton") == null, "顶部栏已移除 AR 重置入口（仅保留在设置 AR 会话区）");
+            var priority = root.Find("FormPanelRoot/SafeAreaContent/FormCard/KeyboardArea/Viewport/Content/PrioritySelector");
+            Check(priority != null && priority.GetComponent<Inspection.UI.PrioritySelector>() != null
+                && priority.childCount == 3 && priority.GetComponentsInChildren<Button>().Length == 3,
+                "表单为低/中/高三项可见分段选择，旧下拉已移除");
+            var formScroll = root.Find("FormPanelRoot/SafeAreaContent/FormCard/KeyboardArea");
+            Check(formScroll != null && formScroll.GetComponent<ScrollRect>() != null
+                && formScroll.GetComponent<Inspection.UI.KeyboardInset>() != null,
+                "表单含滚动与软键盘避让，按钮上方保留错误区");
+            var resetButton = root.Find("SettingsPanelRoot/SafeAreaContent/SettingsCard/Viewport/Content/ArSection/ResetButton");
+            Check(resetButton != null && resetButton.GetComponent<Inspection.UI.SessionResetButton>() != null,
+                "AR 重置保留二次文字确认");
+            var guide = root.Find("FieldGuideRoot");
+            Check(guide != null && guide.GetComponent<Inspection.UI.FieldGuideView>() != null
+                && guide.GetComponent<Inspection.UI.SafeAreaFitter>() != null,
+                "AR 底部任务提示与安全区已接线");
         }
 
         /// <summary>

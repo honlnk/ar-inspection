@@ -76,5 +76,8 @@ namespace Inspection.API
         public const string StatusOpen = "open";
         public const string StatusInProgress = "in_progress";
         public const string StatusResolved = "resolved";
+
+        /// <summary>表单顺序：中 / 低 / 高；与 PlacementController 的三色材质数组保持一致。</summary>
+        public static readonly string[] PriorityValues = { PriorityMedium, PriorityLow, PriorityHigh };
     }
 }

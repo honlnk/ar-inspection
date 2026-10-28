@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using Inspection.API;
@@ -68,6 +69,11 @@ namespace Inspection.UI
             AuthSession.Clear();
             hasLoadedOnce = false; // 下次登录后重新拉取（账号可能不同）
             panelRoot.SetActive(false);
+            var settings = FindAnyObjectByType<SettingsPanelController>(FindObjectsInactive.Include);
+            if (settings != null)
+            {
+                settings.OnCloseClicked();
+            }
             loginPanel.Show("已退出登录");
         }
 
@@ -138,8 +144,8 @@ namespace Inspection.UI
         private static void FillItem(Transform item, IssueDto issue)
         {
             SetText(item, "TitleText", issue.title);
-            SetText(item, "MetaText",
-                $"优先级 {HistoryApiClient.PriorityLabel(issue.priority)} · 状态 {HistoryApiClient.StatusLabel(issue.status)}");
+            SetText(item, "PriorityText", "优先级 " + HistoryApiClient.PriorityLabel(issue.priority));
+            SetText(item, "StatusText", HistoryApiClient.StatusLabel(issue.status));
             SetText(item, "DescText", string.IsNullOrEmpty(issue.description) ? "（无描述）" : issue.description);
             SetText(item, "PositionText", HistoryApiClient.FormatPosition(issue.position));
             SetText(item, "TimeText",
@@ -149,6 +155,10 @@ namespace Inspection.UI
         private static void SetText(Transform item, string childName, string value)
         {
             var text = item.Find(childName)?.GetComponent<Text>();
+            if (text == null)
+            {
+                text = item.GetComponentsInChildren<Text>(true).FirstOrDefault(t => t.gameObject.name == childName);
+            }
             if (text != null)
             {
                 text.text = value ?? string.Empty;

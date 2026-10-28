@@ -1454,3 +1454,30 @@
 
 - 采用（在 `main` 以 `--no-ff` 合并 `feat/dev-quick-login`，现场解决文档与场景冲突并重新验证三端；未推送）
 - 验证：`git merge --no-ff feat/dev-quick-login` 产生 3 处冲突。`web/src/components/LoginPage.tsx` 取计划 007 的令牌样式（`PRIMARY_BUTTON`）并保留快捷登录的导入、状态、`handleQuickLogin` 与 `import.meta.env.DEV` 按钮块，快捷按钮改用 `SECONDARY_BUTTON`；`README.md` 合并双方内容，保留计划 007 的界面与真机说明，补入历史按账号隔离、开发快捷登录章节与 `POST /api/auth/quick-login` 接口行，并将测试数字更新为合并后实际值；`unity/Assets/Scenes/Inspection.unity` 以主分支场景为底（`git checkout --ours`），再用合并后的 `SceneWiring.Run` 加 `-buildTarget Android` 整体重建，登录卡片高度 1440、`QuickLoginButton` 与面板引用均写入场景；`GateVerify.cs`、`SceneWiring.cs`、`HistoryPanelController.cs` 自动合并后逐段复核，计划 007 的界面改动与快捷登录接线互不覆盖，门禁新增的两项检查均能命中重建后的对象。验证：`go vet ./...`、`go test -race ./...` 全绿；`pnpm typecheck`/`lint`/`test` 102/102、`pnpm build` 通过；Unity EditMode 89/89、门禁 66/66（含新增快捷登录入口与接线检查）。场景重建产生整文件重排的大 diff，与既往 `SceneWiring` 重建口径一致（fileID 重新生成），非人工编辑。合并提交未推送，feature worktree 保留。
+
+### Prompt 原文 143
+
+> 仔细阅读当前项目文档，分析都有哪些功能正在开发，哪些功能已经有了计划但还没开始
+
+### 结果
+
+- 采用（只读进度梳理，不改代码；结论已向用户汇报）
+- 验证：通读 `README.md`（版本表/已完成/未完成/已知问题四节）、`docs/plan/001~008` 八份计划的文档状态头与施工日志尾、任务书第 4/7/8 节、`AI_LOG.md` 末三条及 Git 状态（`main` 干净、最新提交 `8141e67` 合并）。结论：计划 001～008 全部施工完成并合入 main，无编码中的功能；进行中的仅剩计划 007 用户侧室内彩排与正式录屏、演示视频录制与最终提交/推送；任务书加分项中未排期的方向为 React 删除、Unity 历史编辑、跨设备跨会话定位与 AI 功能；已知未实测/未深修项为人员管理真机链路（工具代验）与切后台相机失效（仅规避）。
+
+### Prompt 原文 144
+
+> 当前 测试 最终 需要交付什么？
+
+### 结果
+
+- 采用（纯答疑，未产生代码改动；依据任务书第 6 节「交付内容/交付方式」核对并与 README 未完成清单对照）
+- 验证：逐条对照 `docs/Unity-AR研发实操题-候选人任务书-简略版.md` 第 6 节——四项交付物（三端完整源码、简短 README、AI_LOG.md、手机+电脑两段 3～5 分钟演示视频含五个必拍画面），不强制 APK 与公网部署；交付方式为 GitHub/Gitee（保留完整 Git 历史）、百度网盘等并提供可访问链接。现状核对：源码/README/AI_LOG 均已就绪，缺口仅剩两段演示视频的室内彩排与正式录屏、以及最终推送到 GitHub 仓库并提供链接（README「未完成」两条与此一致）。
+
+### Prompt 原文 145
+
+> gh 工具 在我github 仓库 创建 一个同名 公开仓库 并吧当前仓库 同步到上面
+
+### 结果
+
+- 采用（确认 `honlnk/ar-inspection` 已存在且为 PUBLIC、内容为空，无需新建；将本地 `main` 以 SSH 推送至 origin，40 个提交全量同步，完整历史未 squash）
+- 验证：`gh auth status` 确认账号 honlnk、git 协议 ssh；`git remote -v` 已有 SSH 远端 `git@github.com:honlnk/ar-inspection.git`，`gh repo view` 返回 visibility=PUBLIC、`git ls-remote` 推送前为空仓库；推送前检查跟踪文件仅三个 `.env.example` 模板，真实 `compose.local.env`/`backend/.env` 均在忽略列表。`git push -u origin main` 成功，推送后 `ls-remote` 的 `main` 与本地 HEAD 同为 `8141e67`，`rev-list --count origin/main` 为 40。三个本地功能分支均已并入 main，未单独推送。提醒用户：`TEST-ACCOUNTS.md` 含演示明文密码，此前已确认保留，现随公开仓库对外可见。

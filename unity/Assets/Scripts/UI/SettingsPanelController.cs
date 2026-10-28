@@ -1,18 +1,21 @@
 using UnityEngine;
 using UnityEngine.UI;
 using Inspection.API;
+using Inspection.AR;
 
 namespace Inspection.UI
 {
     /// <summary>
     /// 设置面板（居中弹窗 + 全屏蒙层）：后端地址编辑与保存（PlayerPrefs 持久化、保存即生效），
-    /// 顶部栏状态同步，以及未配置地址时的首次启动引导（仅一次，计划 4.5）。
+    /// 顶部栏状态同步，未配置地址时的首次启动引导（仅一次），以及「完整诊断」运行时开关
+    /// （计划 006 4.8：默认关闭、持久化、即时生效，门控周期日志/网络详细日志/放置采集）。
     /// </summary>
     public class SettingsPanelController : MonoBehaviour
     {
         [SerializeField] private GameObject panelRoot;
         [SerializeField] private InputField addressInput;
         [SerializeField] private Text topBarStatusText;
+        [SerializeField] private Toggle fullDiagnosticsToggle;
 
         public bool IsOpen => panelRoot != null && panelRoot.activeSelf;
 
@@ -27,10 +30,14 @@ namespace Inspection.UI
             }
         }
 
-        /// <summary>打开面板：输入框回显已保存地址（没有则空）。</summary>
+        /// <summary>打开面板：输入框回显已保存地址（没有则空）；诊断开关回显当前持久值。</summary>
         public void Open()
         {
             addressInput.text = BackendConfig.GetBaseUrl();
+            if (fullDiagnosticsToggle != null)
+            {
+                fullDiagnosticsToggle.SetIsOnWithoutNotify(DiagnosticsConfig.FullEnabled);
+            }
             panelRoot.SetActive(true);
         }
 
@@ -46,6 +53,16 @@ namespace Inspection.UI
         public void OnCloseClicked()
         {
             panelRoot.SetActive(false);
+        }
+
+        /// <summary>完整诊断开关回调（编辑器绑定，持久化监听的参数只是占位值）：
+        /// 读开关当前状态即时写入持久配置；状态变化日志由 DiagnosticsConfig 统一输出。</summary>
+        public void OnFullDiagnosticsToggled(bool placeholder)
+        {
+            if (fullDiagnosticsToggle != null)
+            {
+                DiagnosticsConfig.FullEnabled = fullDiagnosticsToggle.isOn;
+            }
         }
 
         private void RefreshTopBar()

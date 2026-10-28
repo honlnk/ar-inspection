@@ -156,11 +156,30 @@ namespace Inspection.EditorTools
                     "PlacementController 已接线表单/跟随按钮/设置面板");
                 Check(so.FindProperty("diagnostics").objectReferenceValue != null,
                     "PlacementController 已接线开发构建放置诊断记录器");
+                Check(so.FindProperty("loginPanel").objectReferenceValue != null
+                    && so.FindProperty("historyPanel").objectReferenceValue != null,
+                    "PlacementController 已接线登录/历史面板（打开期间冻结放置）");
+                var materials = so.FindProperty("priorityMaterials");
+                var materialsOk = materials != null && materials.isArray && materials.arraySize == 3;
+                if (materialsOk)
+                {
+                    for (var i = 0; i < 3; i++)
+                    {
+                        materialsOk &= materials.GetArrayElementAtIndex(i).objectReferenceValue != null;
+                    }
+                }
+                Check(materialsOk, "PlacementController 已引用三份优先级共享材质（中/低/高，计划 006 4.5）");
             }
 
             var planeManager = UnityEngine.Object.FindFirstObjectByType<ARPlaneManager>();
             Check(planeManager != null && planeManager.planePrefab != null,
                 "ARPlaneManager 已引用 PlaneVisualizer.prefab");
+
+            // 计划 006：三份优先级材质资产存在（低=绿 / 中=橙 / 高=红）
+            Check(AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/IssueMarker-Medium.mat") != null
+                && AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/IssueMarker-Low.mat") != null
+                && AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/IssueMarker-High.mat") != null,
+                "优先级三色材质资产齐全（IssueMarker-Medium/Low/High.mat）");
 
             var canvas = UnityEngine.Object.FindFirstObjectByType<Canvas>();
             if (canvas != null)
@@ -181,7 +200,71 @@ namespace Inspection.EditorTools
                     var settingsRoot = appUi.Find("SettingsPanelRoot");
                     Check(settingsRoot != null && settingsRoot.Find("Mask") != null && settingsRoot.Find("SettingsCard") != null,
                         "设置面板含全屏蒙层与居中弹窗");
+
+                    // 计划 006：登录全屏面板与历史列表面板
+                    var loginRoot = appUi.Find("LoginPanelRoot");
+                    Check(loginRoot != null && loginRoot.Find("LoginCard") != null,
+                        "登录全屏面板存在且含登录卡片");
+                    var historyRoot = appUi.Find("HistoryPanelRoot");
+                    Check(historyRoot != null
+                        && historyRoot.Find("Header") != null
+                        && historyRoot.Find("ScrollView/Viewport/Content/HistoryItemTemplate") != null,
+                        "历史面板存在且含头部与条目模板");
+
+                    // 层级顺序：设置在登录之上（登录前可配置后端），Toast 最上
+                    var order = new[] { "FormPanelRoot", "ReportButtonRoot", "TopBar", "DevDebugOverlay",
+                        "HistoryPanelRoot", "LoginPanelRoot", "SettingsPanelRoot", "ToastRoot" };
+                    var orderOk = appUi.childCount == order.Length;
+                    if (orderOk)
+                    {
+                        for (var i = 0; i < order.Length; i++)
+                        {
+                            orderOk &= appUi.GetChild(i).name == order[i];
+                        }
+                    }
+                    Check(orderOk, "AppUI 渲染层级正确（全屏面板盖住主界面，设置盖住登录，Toast 最上）");
                 }
+            }
+
+            // 计划 006：登录/历史/设置控制器接线
+            var loginPanel = UnityEngine.Object.FindFirstObjectByType<Inspection.UI.LoginPanelController>(FindObjectsInactive.Include);
+            if (loginPanel != null)
+            {
+                var so = new SerializedObject(loginPanel);
+                Check(so.FindProperty("apiClient").objectReferenceValue != null
+                    && so.FindProperty("usernameInput").objectReferenceValue != null
+                    && so.FindProperty("passwordInput").objectReferenceValue != null
+                    && so.FindProperty("loginButton").objectReferenceValue != null
+                    && so.FindProperty("noticeText").objectReferenceValue != null,
+                    "登录面板已接线认证客户端与输入控件");
+            }
+            else
+            {
+                Check(false, "场景含 LoginPanelController");
+            }
+
+            var historyPanel = UnityEngine.Object.FindFirstObjectByType<Inspection.UI.HistoryPanelController>(FindObjectsInactive.Include);
+            if (historyPanel != null)
+            {
+                var so = new SerializedObject(historyPanel);
+                Check(so.FindProperty("apiClient").objectReferenceValue != null
+                    && so.FindProperty("authClient").objectReferenceValue != null
+                    && so.FindProperty("loginPanel").objectReferenceValue != null
+                    && so.FindProperty("listContent").objectReferenceValue != null
+                    && so.FindProperty("itemTemplate").objectReferenceValue != null,
+                    "历史面板已接线列表客户端/认证/登录面板与列表模板");
+            }
+            else
+            {
+                Check(false, "场景含 HistoryPanelController");
+            }
+
+            var settingsPanel = UnityEngine.Object.FindFirstObjectByType<Inspection.UI.SettingsPanelController>(FindObjectsInactive.Include);
+            if (settingsPanel != null)
+            {
+                var so = new SerializedObject(settingsPanel);
+                Check(so.FindProperty("fullDiagnosticsToggle").objectReferenceValue != null,
+                    "设置面板已接线「完整诊断」开关（计划 006 4.8）");
             }
         }
 

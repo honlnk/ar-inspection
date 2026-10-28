@@ -25,6 +25,12 @@ namespace Inspection.AR
         public void RecordPlacement(Vector2 touchPosition, ARRaycastHit hit, ARAnchor anchor, Transform marker)
         {
 #if DEVELOPMENT_BUILD
+            // 计划 006 4.8：成功放置的实景截图与坐标采集同样受「完整诊断」运行时开关门控，
+            // 默认关闭不新增任何诊断文件；已有历史文件不自动删除
+            if (!DiagnosticsConfig.FullEnabled)
+            {
+                return;
+            }
             if (marker == null)
             {
                 return;

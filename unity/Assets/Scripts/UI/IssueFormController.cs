@@ -15,6 +15,7 @@ namespace Inspection.UI
         [SerializeField] private PlacementController placement;
         [SerializeField] private IssueApiClient apiClient;
         [SerializeField] private ToastView toast;
+        [SerializeField] private LoginPanelController loginPanel;
         [SerializeField] private InputField titleInput;
         [SerializeField] private InputField descriptionInput;
         [SerializeField] private Dropdown priorityDropdown;
@@ -33,6 +34,10 @@ namespace Inspection.UI
         private bool submitting;
 
         public bool IsOpen => panelRoot != null && panelRoot.activeSelf;
+
+        /// <summary>当前优先级下拉索引（钳制到合法范围）；放置时按它选标记材质（计划 006 4.5）。</summary>
+        public int CurrentPriorityIndex =>
+            priorityDropdown != null ? Mathf.Clamp(priorityDropdown.value, 0, PriorityValues.Length - 1) : 0;
 
         /// <summary>
         /// 打开表单：位置只读行取草稿标记锚定坐标；输入内容保持上次状态（失败重试不丢输入）。
@@ -62,6 +67,16 @@ namespace Inspection.UI
         public void OnTitleChanged()
         {
             RefreshSubmitState();
+        }
+
+        /// <summary>
+        /// 优先级下拉变化回调（编辑器绑定，持久化监听的参数只是占位值）：
+        /// 读取下拉当前值，立即把已放置草稿标记换成对应优先级颜色
+        /// （计划 006 4.5：低=绿 / 中=橙 / 高=红；几何、锚点与坐标不受换色影响）。
+        /// </summary>
+        public void OnPriorityChanged(int placeholder)
+        {
+            placement?.ApplyDraftPriority(PriorityValues[CurrentPriorityIndex]);
         }
 
         /// <summary>提交按钮点击（编辑器绑定）：防连点 + 本地拦截空标题，后端仍会兜底 400（双保险）。</summary>
@@ -112,6 +127,14 @@ namespace Inspection.UI
                 toast.Show("问题已上报", 3f);
                 placement.DestroyDraft();
                 CloseAndClear();
+                return;
+            }
+            if (result.SessionExpired)
+            {
+                // 会话过期：草稿标记与全部输入保留，跳转登录（计划 006）
+                toast.Show(result.ErrorMessage);
+                RefreshSubmitState();
+                loginPanel?.ShowForSessionExpired();
                 return;
             }
             // 失败：优先展示后端中文错误；标记与表单全部保留可原样重试；提示常驻不自动消失

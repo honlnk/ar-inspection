@@ -25,6 +25,22 @@ namespace Inspection.AR
 
         private void Update()
         {
+            // 计划 006 4.8：周期采样（调试条、平面/点击/相机姿态日志）统一受
+            // 「完整诊断」运行时开关门控；关闭时隐藏调试条且不做任何周期输出，
+            // 业务反馈（Toast/警告/错误）不受影响
+            if (!DiagnosticsConfig.FullEnabled)
+            {
+                if (text != null && text.gameObject.activeSelf)
+                {
+                    text.gameObject.SetActive(false);
+                }
+                return;
+            }
+            if (text != null && !text.gameObject.activeSelf)
+            {
+                text.gameObject.SetActive(true);
+            }
+
             if (Time.unscaledTime < nextUpdate)
             {
                 return;

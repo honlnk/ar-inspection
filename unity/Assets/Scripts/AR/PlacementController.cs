@@ -11,15 +11,26 @@ namespace Inspection.AR
     /// tap 判定（旧输入 Input.touches）→ UI 防误触 → ARRaycastManager 平面射线 →
     /// ARAnchorManager 平面附锚 → 实例化标记 Prefab；同一时刻至多一个草稿标记。
     /// 阈值按计划 4.1：单指按下到抬起 ≤ 500ms 且累计位移 ≤ 24px 视为 tap。
+    /// 计划 006 起：放置/表单切换优先级时按共享材质三色着色（低=绿/中=橙/高=红），
+    /// 登录与历史面板打开期间冻结放置。
     /// </summary>
     public class PlacementController : MonoBehaviour
     {
         [SerializeField] private IssueFormController formController;
         [SerializeField] private MarkerReportButton reportButton;
         [SerializeField] private SettingsPanelController settingsPanel;
+        [SerializeField] private LoginPanelController loginPanel;
+        [SerializeField] private HistoryPanelController historyPanel;
         [SerializeField] private GameObject markerPrefab;
-        [SerializeField] private UI.ToastView toast;
+        [SerializeField] private ToastView toast;
         [SerializeField] private PlacementDiagnostics diagnostics;
+
+        /// <summary>
+        /// 优先级共享材质（计划 006 4.5）：下标与 IssueFormController.PriorityValues
+        /// 一致（0=medium 橙 / 1=low 绿 / 2=high 红）。共享资产直接赋给 sharedMaterial，
+        /// 不实例化材质，切换不产生泄漏。
+        /// </summary>
+        [SerializeField] private Material[] priorityMaterials = new Material[3];
 
         /// <summary>tap 判定阈值：时长上限（秒）与累计位移上限（像素，参照 1080×2400 屏）。</summary>
         public const float MaxTapDurationSeconds = 0.5f;
@@ -79,7 +90,8 @@ namespace Inspection.AR
             {
                 case TouchPhase.Began:
                     trackedFingerId = null;
-                    // 面板（表单/设置）打开即冻结放置（计划 4.4 第 3 条）；键盘弹起时触摸落在蒙层/输入区，同样被拦
+                    // 面板（表单/设置/登录/历史）打开即冻结放置（计划 4.4 第 3 条、计划 006 4.6）；
+                    // 键盘弹起时触摸落在蒙层/输入区，同样被拦
                     if (AnyPanelOpen())
                     {
                         LastTapInfo = "面板打开，冻结放置";
@@ -150,7 +162,9 @@ namespace Inspection.AR
         private bool AnyPanelOpen()
         {
             return (formController != null && formController.IsOpen)
-                || (settingsPanel != null && settingsPanel.IsOpen);
+                || (settingsPanel != null && settingsPanel.IsOpen)
+                || (loginPanel != null && loginPanel.IsOpen)
+                || (historyPanel != null && historyPanel.IsOpen);
         }
 
         private void TryPlaceAt(Vector2 screenPosition)
@@ -201,11 +215,56 @@ namespace Inspection.AR
             }
             currentAnchor = anchor;
             currentMarker = Instantiate(markerPrefab, hit.pose.position, hit.pose.rotation, anchor.transform);
+            // 放置即按表单当前优先级着色（计划 006 4.5）；表单未打开时沿用其保留的选择
+            ApplyMarkerPriority(currentMarker, formController != null ? formController.CurrentPriorityIndex : 0);
             reportButton.SetTarget(currentMarker.transform);
             LastTapInfo = "已放置标记";
             if (diagnostics != null)
             {
                 diagnostics.RecordPlacement(screenPosition, hit, anchor, currentMarker.transform);
+            }
+        }
+
+        /// <summary>
+        /// 表单内切换优先级时立即重着色已放置草稿（公开入口，表单回调调用）；
+        /// 无草稿时为空操作。只换 sharedMaterial：几何、锚点、世界坐标与点击位置不变。
+        /// </summary>
+        public void ApplyDraftPriority(string priority)
+        {
+            if (currentMarker == null)
+            {
+                return;
+            }
+            ApplyMarkerPriority(currentMarker, PriorityToMaterialIndex(priority));
+        }
+
+        /// <summary>把优先级材质数组应用到标记渲染器（数组缺失/越界时保留 Prefab 默认材质不报错）。</summary>
+        private void ApplyMarkerPriority(GameObject marker, int materialIndex)
+        {
+            if (priorityMaterials == null || priorityMaterials.Length == 0)
+            {
+                return;
+            }
+            var markerRenderer = marker.GetComponentInChildren<MeshRenderer>();
+            if (markerRenderer == null || materialIndex < 0 || materialIndex >= priorityMaterials.Length
+                || priorityMaterials[materialIndex] == null)
+            {
+                return;
+            }
+            markerRenderer.sharedMaterial = priorityMaterials[materialIndex];
+        }
+
+        /// <summary>
+        /// 优先级字符串 → 材质数组下标（纯函数，供 EditMode 测试）：
+        /// medium=0 / low=1 / high=2（与 IssueFormController.PriorityValues 顺序一致），未知值回退 0。
+        /// </summary>
+        public static int PriorityToMaterialIndex(string priority)
+        {
+            switch (priority)
+            {
+                case "low": return 1;
+                case "high": return 2;
+                default: return 0;
             }
         }
 

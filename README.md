@@ -7,14 +7,14 @@
 | 部分 | 技术 | 版本 | 状态 |
 | --- | --- | --- | --- |
 | 移动端 | Unity 6000.3.27f1 LTS（修订 672d562a42a7）+ AR Foundation 6.6.2 + ARCore XR Plug-in 6.6.2 + XR Plug-in Management 4.4.0 + XR Core Utils 2.6.0 + Test Framework 1.5.1 | 见 `unity/Packages/manifest.json` 与 `unity/Packages/packages-lock.json` | 真机业务链路已通（2026-10-28 计划 004）：Android 开发构建、真机平面检测、点击放置标记、跟随按钮、表单上报与后端地址运行时配置真机验收，HTTP 上报已入库复核；计划 005 修复相机姿态后放置偏移已真机复验消除；计划 006 新增登录会话、优先级三色标记、只读历史列表与完整诊断开关（EditMode 65/65、门禁 44 项全过、APK 已构建；006 新功能真机实拍待验收）。注：minSdk 由 25 提至 29（ARCore 硬性要求），图形 API 强制 OpenGL ES3 |
-| 管理端 | React 19.3.1 + TypeScript 7.0.2 + Vite 8.3.5 + Tailwind CSS 4.3.3 + oxlint 1.89.0；测试：Vitest 5.0.5 + React Testing Library 16.3.3 + user-event 14.6.8 + jest-dom 7.0.1 + jsdom 30.1.3（Node.js v24.11.0、pnpm 10.21.0） | 见 `web/package.json` 与 `web/pnpm-lock.yaml` | 业务闭环完成：真实列表加载、手动刷新、状态修改保存与全部异常反馈已实现；计划 006 新增管理员登录/会话恢复、WebSocket 实时同步（自动重连+序号去重+静默校准）、标题/优先级/状态三条件筛选，浏览器实测通过（76 测试全绿）。注：工具链由计划锁定的 Vite 7 / TS 5 经用户拍板升级至最新稳定版（2026-10-27，计划文档施工日志留档） |
-| 后端 | Go 1.27.3 + Gin 1.12.0 + modernc.org/sqlite 1.61.0（纯 Go 驱动，SQLite 本地文件）+ coder/websocket 1.8.x（实时事件） | 见 `backend/go.mod` 与 `backend/go.sum` | 业务闭环完成：健康检查、创建、列表、状态修改四接口与参数校验、事务持久化、重启数据保留均已验收；计划 006 新增本地演示账号（inspector/admin，bcrypt+会话 Cookie）、按角色收口的授权（匿名 401/越权 403/巡检员仅见自己上报）、`/api/ws` 管理员实时事件流（单调 seq，提交后发布），`-race` 测试全绿 |
+| 管理端 | React 19.3.1 + TypeScript 7.0.2 + Vite 8.3.5 + Tailwind CSS 4.3.3 + oxlint 1.89.0；测试：Vitest 5.0.5 + React Testing Library 16.3.3 + user-event 14.6.8 + jest-dom 7.0.1 + jsdom 30.1.3（Node.js v24.11.0、pnpm 10.21.0） | 见 `web/package.json` 与 `web/pnpm-lock.yaml` | 业务闭环完成：真实列表加载、手动刷新、状态修改保存与全部异常反馈已实现；计划 006 新增管理员登录/会话恢复、WebSocket 实时同步（自动重连+序号去重+静默校准）、标题/优先级/状态三条件筛选，浏览器实测通过；计划 008 新增「人员管理」页（管理员对巡检员账号增删改查：新增表单、行内编辑、两段式删除确认、管理员账号只读展示）与双入口导航（问题列表/人员管理切换保持工作台挂载，实时连接与草稿不丢），89 测试全绿。注：工具链由计划锁定的 Vite 7 / TS 5 经用户拍板升级至最新稳定版（2026-10-27，计划文档施工日志留档） |
+| 后端 | Go 1.27.3 + Gin 1.12.0 + modernc.org/sqlite 1.61.0（纯 Go 驱动，SQLite 本地文件）+ coder/websocket 1.8.x（实时事件） | 见 `backend/go.mod` 与 `backend/go.sum` | 业务闭环完成：健康检查、创建、列表、状态修改四接口与参数校验、事务持久化、重启数据保留均已验收；计划 006 新增本地演示账号（inspector/admin，bcrypt+会话 Cookie）、按角色收口的授权（匿名 401/越权 403/巡检员仅见自己上报）、`/api/ws` 管理员实时事件流（单调 seq，提交后发布）；计划 008 新增 `/api/users` 四个管理接口（列表/新增/修改/删除，仅管理员），初始化语义改造为「admin 每次启动按环境变量同步，inspector 仅首启创建此后由管理页维护」，删除巡检员保留其问题（归属转未知仅管理员可见）并同步清会话，`-race` 测试全绿 |
 | 容器 | Docker（linux/arm64 29.1.3）+ Compose v5.0.0；镜像 golang:1.27-alpine / alpine:3.22 / node:24-alpine / nginx:1.29-alpine | 见 `backend/Dockerfile`、`web/Dockerfile`、`compose.yaml` | 双容器一键启动验收通过（2026-10-28）：arm64 原生构建、健康检查、同源 `/api` 与 WS 代理、全新命名卷初始化、停止/重启数据保留、非 root 运行、局域网直连 |
 | 真机 | iQOO Z9（V2361A，Android 16） | ARCore 运行时 1.57.0，实测 SUPPORTED_INSTALLED | 已验证 |
 
 ## 如何启动
 
-系统自计划 006 起需要登录（两个本地演示账号：巡检员 `inspector` 用 Unity 端上报，管理员 `admin` 用网页管理端处理）。两套启动方式二选一：
+系统自计划 006 起需要登录（两个本地演示账号：巡检员 `inspector` 用 Unity 端上报，管理员 `admin` 用网页管理端处理）。自计划 008 起巡检员账号由管理员在网页「人员管理」页增删改查，`INSPECTOR_PASSWORD` 仅作为**首次部署创建 inspector 时的初始密码**，此后页面改密即生效、环境变量不再覆盖。两套启动方式二选一：
 
 ### 方式一：Docker Compose 一键启动（推荐演示用）
 
@@ -33,7 +33,7 @@ docker compose ps                                # 两容器 Healthy 即就绪
 
 ### 方式二：本机直接启动（开发方式）
 
-- **Go 后端**：需要三个环境变量（缺失或会话密钥过短会拒绝启动）：`INSPECTOR_PASSWORD`、`ADMIN_PASSWORD`、`SESSION_SECRET`（≥32 字符，随机 64 位 hex 推荐）。本机启动：`cd backend && set -a && source .env && set +a && go run ./cmd/server`（`.env` 参考 `backend/.env.example`，不入库）。默认监听 `:8080`（`ADDR` 可改），数据库默认 `./data/inspection.db`（`ISSUE_DB_PATH` 可改），跨域白名单默认 `http://localhost:5173,http://127.0.0.1:5173`（`CORS_ORIGINS` 可改）。健康检查：`curl http://localhost:8080/api/health` → `{"data":{"status":"ok"}}`。真机联调时需监听 `0.0.0.0`（默认 `:8080` 即是）。测试与静态检查：`go test ./...`、`go test -race ./...`、`go vet ./...`。
+- **Go 后端**：需要三个环境变量（缺失或会话密钥过短会拒绝启动）：`INSPECTOR_PASSWORD`（仅首次部署创建 inspector 的初始密码，见上文）、`ADMIN_PASSWORD`（每次启动同步到 admin 账号）、`SESSION_SECRET`（≥32 字符，随机 64 位 hex 推荐）。本机启动：`cd backend && set -a && source .env && set +a && go run ./cmd/server`（`.env` 参考 `backend/.env.example`，不入库）。默认监听 `:8080`（`ADDR` 可改），数据库默认 `./data/inspection.db`（`ISSUE_DB_PATH` 可改），跨域白名单默认 `http://localhost:5173,http://127.0.0.1:5173`（`CORS_ORIGINS` 可改）。健康检查：`curl http://localhost:8080/api/health` → `{"data":{"status":"ok"}}`。真机联调时需监听 `0.0.0.0`（默认 `:8080` 即是）。测试与静态检查：`go test ./...`、`go test -race ./...`、`go vet ./...`。
 - **React 管理端**：`cd web && pnpm install && pnpm dev`，默认 `http://localhost:5173`（`VITE_API_BASE_URL` 见 `web/.env.example`，默认请求 `http://localhost:8080`；启动后即从后端加载问题列表）。类型检查/静态检查/测试/构建：`pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`。
 - **Unity 上报模拟工具（开发辅助）**：独立 Go 命令行工具 `tools/issue-reporter/`，代替 Unity 客户端以真实 HTTP 上报/查询问题，用于接口联调与回归（坐标为人工输入的模拟坐标，不代表真实 AR 位置）：
 
@@ -85,7 +85,9 @@ docker compose ps                                # 两容器 Healthy 即就绪
 
 ### 账号与会话（计划 006 起）
 
-两个本地演示账号：`inspector`（巡检员，Unity 端上报）与 `admin`（管理员，网页管理端处理）。密码来自启动环境变量（`INSPECTOR_PASSWORD`/`ADMIN_PASSWORD`），bcrypt 存储；会话令牌 12 小时有效，仅以 HMAC-SHA256 摘要存库。浏览器走 HttpOnly Cookie `inspection_session`；非浏览器客户端（Unity/工具）从登录响应的 `Set-Cookie` 头解析令牌后以 `Authorization: Bearer <令牌>` 携带，任何端都不存密码。
+两个本地演示账号：`inspector`（巡检员，Unity 端上报）与 `admin`（管理员，网页管理端处理）。密码 bcrypt 存储；会话令牌 12 小时有效，仅以 HMAC-SHA256 摘要存库。浏览器走 HttpOnly Cookie `inspection_session`；非浏览器客户端（Unity/工具）从登录响应的 `Set-Cookie` 头解析令牌后以 `Authorization: Bearer <令牌>` 携带，任何端都不存密码。
+
+自计划 008 起，管理员可在网页「人员管理」页增删改查巡检员账号：新增即建即登录（新账号无需重启即可用 Unity 端登录上报）；改显示名不影响会话；重置密码使该账号全部会话立即失效；删除账号保留其历史问题（归属转为未知，仅管理员可见）。`admin` 为系统账号由环境变量维护，页面只读；`inspector` 为首启自动创建的普通巡检员，此后与其他巡检员一样由页面管理（首启初始密码来自 `INSPECTOR_PASSWORD`，此后以页面设置为准）。
 
 | 方法与路径 | 用途 | 权限 |
 | --- | --- | --- |
@@ -96,9 +98,13 @@ docker compose ps                                # 两容器 Healthy 即就绪
 | `GET /api/issues` | 问题列表 | inspector（仅自己上报）/ admin（全量，含历史无主数据） |
 | `POST /api/issues` | 创建问题（Unity 上报） | inspector / admin |
 | `PATCH /api/issues/{id}/status` | 修改处理状态 | 仅 admin |
+| `GET /api/users` | 巡检员与管理员账号列表（人员管理页） | 仅 admin |
+| `POST /api/users` | 新增巡检员（`{username, displayName, password}`；用户名 2～32 位限字母数字下划线连字符且不可改，显示名 1～32 字符，密码 8～72 位） | 仅 admin |
+| `PATCH /api/users/{username}` | 修改显示名与/或重置密码（重置密码清空该账号全部会话） | 仅 admin |
+| `DELETE /api/users/{username}` | 删除巡检员（保留其历史问题，归属转未知；admin 账号不可改删） | 仅 admin |
 | `GET /api/ws` | 实时事件流（WebSocket；创建/更新事件，事件携带单调递增 `seq`，客户端据此去重与重连校准） | 仅 admin |
 
-未认证统一 `401 authentication_required`；已认证但角色不允许统一 `403 permission_denied`。
+未认证统一 `401 authentication_required`；已认证但角色不允许统一 `403 permission_denied`。人员管理另有细分：目标账号不存在 `404 user_not_found`，对管理员账号改删 `403 admin_account_protected`，用户名重复或校验非法 `400 invalid_argument`（中文提示区分「用户名已存在」等场景）。
 
 ### 问题字段与校验
 
@@ -158,6 +164,7 @@ curl -X POST http://localhost:8080/api/issues -H 'Authorization: Bearer <令牌>
 - Unity 成功放置诊断记录（开发构建）：同名截图与结构化数据已接入，具体字段和导出方式见上文；构建和编辑器测试通过，五组真机记录已读取并完成双会话交叉验证，结论见复盘 002。
 - Unity AR 相机姿态与放置偏移修复（2026-10-28 计划 005）：AR Session 同对象补齐唯一 AR 输入管理器、主相机改用 Input System 姿态驱动并按官方绑定手持 AR 设备位置/旋转、初始化与搭建共用同一配置（幂等，副本两轮全量循环验证）；门禁升级为输入链路精确检查，EditMode 31/31（含负例）、门禁 35/35。**真机复验通过**：139 条相机姿态采样无冻结（位置三轴变化 0.46/0.27/0.60 m）、24 组放置标记世界坐标=命中点且屏幕投影与触点偏移 0px、世界锁定与平面对齐正常、UI 防误触/跟随按钮/上报成功与失败回归/地址重启保留全部通过（证据 `docs/evidence/005-unity-camera-pose-fix/verification-report.md`）。
 - 功能完善与三端交付闭环（2026-10-28 计划 006）：① 本地演示账号与真实后端权限（bcrypt 口令、HttpOnly Cookie 会话 + Bearer 双通道、12 小时 TTL、巡检员仅见自己上报/管理员全量/匿名 401/越权 403）；② React WebSocket 实时同步（管理员事件流、单调 seq 去重、断线指数退避重连+静默全量校准，浏览器实测「另一端创建→看板不刷新自动出现」）；③ 管理端三条件筛选（标题关键词+优先级+状态，纯前端过滤，计数与草稿语义保留）；④ Docker Compose 一键启动（arm64 双镜像、同源 `/api`+WS 代理、命名卷持久化、非 root、健康检查，全新卷验收含停止/重启数据保留）；⑤ Unity 登录会话（会话恢复、admin 拒入、过期保草稿跳登录）+ 只读历史列表（按创建时间倒序、北京时间、刷新/退出登录）；⑥ AR 草稿三色优先级（低绿/中橙/高红，共享材质、表单内切换即时重着色且几何/锚点/坐标不变）；⑦ 完整诊断开关（默认关、持久化，门控调试条/网络详细日志/放置截图，业务提示不受影响）。三端闭环（工具代真机上报→React 实时出现→管理员改状态→API 复核→容器重启→再查询）与必做回归（空标题/非法枚举 400、匿名 401、巡检员改状态 403、后端不可用提示不白屏、恢复自动重连）全部通过（证据 `docs/evidence/006-feature-completion/`）。
+- 人员管理功能（2026-10-28 计划 008）：管理员在网页管理台对巡检员账号增删改查。后端 `/api/users` 四接口（仅管理员，错误码细分 user_not_found/admin_account_protected）；初始化语义改造（admin 每次启动按环境变量同步，inspector 仅首启创建，删除账号重启不复活）；重置密码/删除账号同事务清会话（旧令牌立即 401）；删除保留历史问题（归属转未知，仅管理员可见，与既有遗留数据语义一致）。React 新增「人员管理」页（新增表单/行内编辑/两段式删除确认/管理员只读分区）与双入口导航（问题列表、人员管理两面板保持挂载切换，实时连接、草稿与筛选不丢）。六步闭环验收（页面创建→新账号即建即登录即上报→实时可见→三视角归属可见性→改显示名不踢会话→重置密码踢会话→删除含数据库三表复核→重启不复活）全部通过；验收中发现的 CORS 预检缺 DELETE 已修复（证据 `docs/evidence/008-personnel-management/`）。
 
 **未完成**
 
@@ -168,6 +175,7 @@ curl -X POST http://localhost:8080/api/issues -H 'Authorization: Bearer <令牌>
 
 - **Unity 放置位置偏移（已修复并真机复验通过，2026-10-28 计划 005，留档）**：真机上 AR 虚拟层曾相对相机实景错位、标记落在触点下方或屏幕外。根因：AR Session 缺 AR 输入管理器、主相机误用旧版空间跟踪驱动，手机姿态未进入渲染相机。已按计划 005 修复并真机验证（详见「已完成」与 [复盘 002](docs/lessons/002-AR虚拟内容偏移与相机位姿冻结.md) 第 10 节）；证据 `docs/evidence/005-unity-camera-pose-fix/`。- **Docker 基础镜像未锁 patch 级 digest（可重复性取舍）**：`golang:1.27-alpine`、`node:24-alpine`、`nginx:1.29-alpine`、`alpine:3.22` 为浮动小版本 tag，跨机器重建理论上存在小版本漂移；pnpm 已锁 `10.21.0`、Go 依赖与前端依赖均按锁文件冻结。如需严格可重复构建，可在部署时改为 digest 固定。
 - **计划 006 新功能未经真机实测**：Unity 登录会话、三色标记、历史列表、诊断开关目前由 EditMode 测试、场景门禁与桌面端逻辑验证背书，真机（iQOO Z9）实拍验收与录制待用户执行；APK 已产出。
+- **人员管理未经真机实测（计划 008）**：新账号从 Unity 真机端登录上报的链路由 `tools/issue-reporter`（同一 HTTP 契约）代验；人员管理页的桌面闭环已全部通过，但真机上用新建巡检员账号走一遍登录+上报尚未实测（Unity 端登录界面无改动，预期不受影响）。
 - **真机长时间运行发热降频（已缓解）**：持续扫描 + 手电常亮会使机身升温触发 Thermal Status Severe（实测电池 40.3°C），ARCore 识别随之变慢；已将 App 全局限帧 30fps（`AppFrameRate`）并建议短测多轮。iQOO Z9（骁龙 7 Gen 3）算力本身满足 ARCore 要求（SUPPORTED_INSTALLED），非算力瓶颈。
 - **真机切后台/息屏后相机失效（已定位，规避法有效）**：App 切后台再恢复后相机帧持续报 "The hardware buffer handle is null"、触摸无响应；`force-stop` 后重启即恢复。未做深度修复（涉及 ARCore 会话恢复生命周期），演示时注意保持亮屏。
 - **Unity 下载的地域限制（已解决，留档）**：Unity CDN（Akamai）按出口 IP 判定大中华区并重定向到 download.unitychina.cn（对 Unity 6 macOS 包一律 404）；本机机场的香港/日本节点 IP 段（ASN 134972）同样命中该判定，切换到「美国A01」节点后正常。后续下载 Unity 相关资源需保持美国/非大中华区出口节点。
@@ -178,7 +186,7 @@ curl -X POST http://localhost:8080/api/issues -H 'Authorization: Bearer <令牌>
 ## 佐证材料
 
 - [docs/真机ARCore可行性验证报告.md](docs/真机ARCore可行性验证报告.md) — 本轮设备验证的完整记录（结论、排查过程、UNKNOWN_ERROR 根因、复现方式）
-- `docs/evidence/` — Play 商店"不兼容"提示与 vivo 商店页面对比截图（背景说明：Play 分发目录不含国行型号，与运行时支持无关，详见 AI_LOG 第 7 条）；`docs/evidence/003-react-bug-management/` — 计划 003 浏览器联合验收截图（桌面与 375px 窄屏正常列表、窄屏刷新失败提示）；`docs/evidence/004-unity-ar-place-report/` — 计划 004 真机验收截图（平面检测、放置标记与跟随按钮、点击位置偏移问题留证）；`docs/evidence/005-unity-camera-pose-fix/` — 计划 005 相机姿态修复真机复验报告；`docs/evidence/006-feature-completion/` — 计划 006 证据（登录后实时看板与筛选截图、三端闭环截图、Docker 验收记录、闭环与回归验收记录）
+- `docs/evidence/` — Play 商店"不兼容"提示与 vivo 商店页面对比截图（背景说明：Play 分发目录不含国行型号，与运行时支持无关，详见 AI_LOG 第 7 条）；`docs/evidence/003-react-bug-management/` — 计划 003 浏览器联合验收截图（桌面与 375px 窄屏正常列表、窄屏刷新失败提示）；`docs/evidence/004-unity-ar-place-report/` — 计划 004 真机验收截图（平面检测、放置标记与跟随按钮、点击位置偏移问题留证）；`docs/evidence/005-unity-camera-pose-fix/` — 计划 005 相机姿态修复真机复验报告；`docs/evidence/006-feature-completion/` — 计划 006 证据（登录后实时看板与筛选截图、三端闭环截图、Docker 验收记录、闭环与回归验收记录）；`docs/evidence/008-personnel-management/` — 计划 008 人员管理六步闭环验收记录与七张截图（页面操作全程 + 数据库复核）
 - `tools/ar-support-check/` — ARCore 支持检测工具源码与三张真机输出截图
 
 ## 复盘记录

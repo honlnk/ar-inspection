@@ -1,4 +1,6 @@
 // HTTP 客户端与响应契约检查：统一信封解析、超时/网络错误分类与可读 JSON 输出。
+// 计划 006 起：业务接口需要会话；提供 -username/-password 时先登录换取会话令牌，
+// 以 Authorization: Bearer 携带；登录失败直接失败，不自动回退匿名请求。
 package main
 
 import (
@@ -41,6 +43,19 @@ type createRequest struct {
 	Position    position `json:"position"`
 }
 
+// loginRequest 与登录接口契约一致；令牌绝不出现在任何输出中。
+type loginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// authUser 登录成功响应 data：username / displayName / role。
+type authUser struct {
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	Role        string `json:"role"`
+}
+
 // issueFields 与三端统一的问题字段一致，用于成功响应契约检查。
 type issueFields struct {
 	ID          string   `json:"id"`
@@ -65,19 +80,73 @@ type envelope struct {
 var validPriorities = map[string]bool{"low": true, "medium": true, "high": true}
 var validStatuses = map[string]bool{"open": true, "in_progress": true, "resolved": true}
 
+const sessionCookieName = "inspection_session"
+
+// loginForToken 登录并从 Set-Cookie 响应头解析会话令牌（程序化客户端读取 HttpOnly 头不受限制）。
+// 返回登录响应体（供完整展示）与令牌；任何失败都直接失败，绝不回退匿名请求。
+func loginForToken(baseURL string, timeout time.Duration, username, password string) ([]byte, string, *exitCodeError) {
+	payload, err := json.Marshal(loginRequest{Username: username, Password: password})
+	if err != nil {
+		return nil, "", requestError("构造登录请求体失败：%v", err)
+	}
+	body, status, headers, cerr := doRequestFull(http.MethodPost, apiURL(baseURL, "/api/auth/login"), timeout, payload, "")
+	if cerr != nil {
+		return nil, "", cerr
+	}
+	if !isSuccessStatus(status) {
+		return body, "", withAuthHint(httpStatusError(body, status))
+	}
+	var env envelope
+	if err := json.Unmarshal(body, &env); err != nil || env.Data == nil {
+		return body, "", requestError("登录成功响应缺少 data 字段")
+	}
+	var user authUser
+	if err := json.Unmarshal(env.Data, &user); err != nil || user.Username == "" || user.Role == "" {
+		return body, "", requestError("登录成功响应结构不正确（缺少 username/role）")
+	}
+	token := extractSessionToken(headers.Get("Set-Cookie"))
+	if token == "" {
+		return body, "", requestError("登录成功但响应未包含会话 Cookie（%s），无法携带会话", sessionCookieName)
+	}
+	return body, token, nil
+}
+
+// extractSessionToken 从 Set-Cookie 头解析会话令牌值。
+func extractSessionToken(setCookie string) string {
+	for _, part := range strings.Split(setCookie, ";") {
+		cookie := strings.TrimSpace(part)
+		name, value, found := strings.Cut(cookie, "=")
+		if found && name == sessionCookieName {
+			return value
+		}
+	}
+	return ""
+}
+
+// withAuthHint 给 401/403 错误追加会话参数提示，便于自助修正命令行。
+func withAuthHint(err *exitCodeError) *exitCodeError {
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.message, "HTTP 401") {
+		err.message += "；业务接口需要登录，请加 -username/-password 或 -token 参数"
+	}
+	return err
+}
+
 // createIssue 向后端创建问题并返回完整响应体；HTTP 错误、网络错误、超时与契约错误
 // 均以 exitCodeError 返回（HTTP 错误时响应体一并返回用于完整展示）。
-func createIssue(baseURL string, timeout time.Duration, req createRequest) ([]byte, *exitCodeError) {
+func createIssue(baseURL string, timeout time.Duration, token string, req createRequest) ([]byte, *exitCodeError) {
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return nil, requestError("构造请求体失败：%v", err)
 	}
-	body, status, cerr := doRequest(http.MethodPost, apiURL(baseURL, "/api/issues"), timeout, payload)
+	body, status, cerr := doRequest(http.MethodPost, apiURL(baseURL, "/api/issues"), timeout, payload, token)
 	if cerr != nil {
 		return nil, cerr
 	}
 	if !isSuccessStatus(status) {
-		return body, httpStatusError(body, status)
+		return body, withAuthHint(httpStatusError(body, status))
 	}
 	if verr := validateCreatedIssue(body); verr != nil {
 		return body, verr
@@ -86,13 +155,13 @@ func createIssue(baseURL string, timeout time.Duration, req createRequest) ([]by
 }
 
 // listIssues 查询问题列表并返回完整响应体；空数组合法，失败不得伪装为空列表。
-func listIssues(baseURL string, timeout time.Duration) ([]byte, *exitCodeError) {
-	body, status, cerr := doRequest(http.MethodGet, apiURL(baseURL, "/api/issues"), timeout, nil)
+func listIssues(baseURL string, timeout time.Duration, token string) ([]byte, *exitCodeError) {
+	body, status, cerr := doRequest(http.MethodGet, apiURL(baseURL, "/api/issues"), timeout, nil, token)
 	if cerr != nil {
 		return nil, cerr
 	}
 	if !isSuccessStatus(status) {
-		return body, httpStatusError(body, status)
+		return body, withAuthHint(httpStatusError(body, status))
 	}
 	if verr := validateIssueList(body); verr != nil {
 		return body, verr
@@ -109,34 +178,44 @@ func isSuccessStatus(status int) bool {
 }
 
 // doRequest 发送请求并读取完整响应体；网络错误与超时转换为中文诊断。
-func doRequest(method, url string, timeout time.Duration, payload []byte) ([]byte, int, *exitCodeError) {
+// token 非空时以 Authorization: Bearer 携带（令牌不写入任何日志或输出）。
+func doRequest(method, url string, timeout time.Duration, payload []byte, token string) ([]byte, int, *exitCodeError) {
+	body, status, _, cerr := doRequestFull(method, url, timeout, payload, token)
+	return body, status, cerr
+}
+
+// doRequestFull 是 doRequest 的完整版，额外返回响应头（登录需读 Set-Cookie）。
+func doRequestFull(method, url string, timeout time.Duration, payload []byte, token string) ([]byte, int, http.Header, *exitCodeError) {
 	var reader io.Reader
 	if payload != nil {
 		reader = bytes.NewReader(payload)
 	}
 	httpReq, err := http.NewRequest(method, url, reader)
 	if err != nil {
-		return nil, 0, requestError("构造请求失败：%v", err)
+		return nil, 0, nil, requestError("构造请求失败：%v", err)
 	}
 	if payload != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
 	httpReq.Header.Set("Accept", "application/json")
+	if token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		if isTimeoutError(err) {
-			return nil, 0, requestError("请求超时（%s），后端未在时限内响应；工具不自动重试，请确认后端状态后手动重试", timeout)
+			return nil, 0, nil, requestError("请求超时（%s），后端未在时限内响应；工具不自动重试，请确认后端状态后手动重试", timeout)
 		}
-		return nil, 0, requestError("无法连接后端：%v", err)
+		return nil, 0, nil, requestError("无法连接后端：%v", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp.StatusCode, requestError("读取响应失败：%v", err)
+		return nil, resp.StatusCode, nil, requestError("读取响应失败：%v", err)
 	}
-	return body, resp.StatusCode, nil
+	return body, resp.StatusCode, resp.Header, nil
 }
 
 func isTimeoutError(err error) bool {

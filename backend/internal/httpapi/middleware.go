@@ -26,7 +26,8 @@ func CORSMiddleware(origins []string) gin.HandlerFunc {
 			if _, isAllowed := allowed[origin]; isAllowed {
 				c.Header("Access-Control-Allow-Origin", origin)
 				c.Header("Access-Control-Allow-Credentials", "true")
-				c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+				// DELETE 自计划 008 起由管理端人员管理页使用，需在预检方法列表中放行
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			}
 		}
